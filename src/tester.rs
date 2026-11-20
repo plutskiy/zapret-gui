@@ -1,7 +1,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::mpsc::Sender;
 use std::time::Duration;
 
@@ -21,7 +21,15 @@ pub struct Params {
     pub parallel: usize,
     pub timeout: u64,
     pub dpi_range: u64,
+    /// Быстрый режим (авто-подбор): короткий таймаут, досрочный отказ
+    /// заведомо нерабочих конфигураций и остановка на первой подошедшей.
+    pub fast: bool,
 }
+
+/// Доля успешных проверок, начиная с которой конфигурация считается рабочей.
+const PASS_RATIO: f64 = 0.8;
+/// Потолок таймаута в быстром режиме, секунды.
+const FAST_TIMEOUT: u64 = 3;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Check {
@@ -119,6 +127,16 @@ impl Report {
             }
         }
         s
+    }
+
+    /// Хватает ли успешных проверок, чтобы считать конфигурацию рабочей.
+    pub fn passes(&self) -> bool {
+        if self.error.is_some() {
+            return false;
+        }
+        let s = self.summary();
+        let total = s.ok + s.fail + s.blocked;
+        s.ok > 0 && s.ok as f64 >= total as f64 * PASS_RATIO
     }
 
     pub fn score(&self) -> (i64, i64) {
@@ -322,7 +340,12 @@ fn assemble_std(targets: &[Target], jobs: &[StdJob], done: Vec<Option<StdDone>>)
         match done {
             Some(StdDone::Http(label, check)) => results[job.target].checks.push((label, check)),
             Some(StdDone::Ping(ping)) => results[job.target].ping = ping,
-            None => {}
+            // Задача не завершилась (досрочный отказ конфигурации) — это провал.
+            None => {
+                if let StdJobKind::Http(label, _) = job.kind {
+                    results[job.target].checks.push((label, Check::Error));
+                }
+            }
         }
     }
     results.into_iter().map(Outcome::Std).collect()
@@ -368,39 +391,50 @@ fn check_dpi(
     cancel: &Arc<AtomicBool>,
 ) -> DpiResult {
     let url = format!("https://{}", t.host);
-    let mut lines = Vec::new();
-    for (label, tls) in STD_TESTS {
-        let resp = net::perform(&Request {
-            url: &url,
-            head: false,
-            tls,
-            body: Some(payload),
-            range: Some(range),
-            timeout: Duration::from_secs(timeout),
-            connect_timeout: Duration::from_secs(timeout.min(3)),
-            max_body: range,
-            keep_body: false,
-            cancel: Some(cancel.clone()),
-        });
-        let status = match &resp.fail {
-            None => DpiStatus::Ok,
-            Some(Fail::Timeout) if resp.up > 0 && resp.down == 0 && resp.time >= timeout as f64 => {
-                DpiStatus::LikelyBlocked
-            }
-            Some(_) => DpiStatus::Fail,
-        };
-        lines.push(DpiLine {
-            label,
-            code: resp
-                .code
-                .map(|c| c.to_string())
-                .unwrap_or_else(|| "NA".into()),
-            up_kb: resp.up as f64 / 1024.0,
-            down_kb: resp.down as f64 / 1024.0,
-            time: resp.time,
-            status,
-        });
-    }
+    // Три варианта TLS проверяются одновременно: задержка цели — одна, а не тройная.
+    let lines: Vec<DpiLine> = std::thread::scope(|scope| {
+        let handles: Vec<_> = STD_TESTS
+            .iter()
+            .map(|&(label, tls)| {
+                let url = &url;
+                scope.spawn(move || {
+                    let resp = net::perform(&Request {
+                        url,
+                        head: false,
+                        tls,
+                        body: Some(payload),
+                        range: Some(range),
+                        timeout: Duration::from_secs(timeout),
+                        connect_timeout: Duration::from_secs(timeout.min(3)),
+                        max_body: range,
+                        keep_body: false,
+                        cancel: Some(cancel.clone()),
+                    });
+                    let status = match &resp.fail {
+                        None => DpiStatus::Ok,
+                        Some(Fail::Timeout)
+                            if resp.up > 0 && resp.down == 0 && resp.time >= timeout as f64 =>
+                        {
+                            DpiStatus::LikelyBlocked
+                        }
+                        Some(_) => DpiStatus::Fail,
+                    };
+                    DpiLine {
+                        label,
+                        code: resp
+                            .code
+                            .map(|c| c.to_string())
+                            .unwrap_or_else(|| "NA".into()),
+                        up_kb: resp.up as f64 / 1024.0,
+                        down_kb: resp.down as f64 / 1024.0,
+                        time: resp.time,
+                        status,
+                    }
+                })
+            })
+            .collect();
+        handles.into_iter().filter_map(|h| h.join().ok()).collect()
+    });
     DpiResult {
         id: t.id.clone(),
         provider: t.provider.clone(),
@@ -546,14 +580,54 @@ fn run(
         let outcomes: Vec<Outcome> = match params.kind {
             Kind::Standard => {
                 let workers = (params.parallel * 6).max(jobs.len()).min(96).max(1);
-                let done = parallel::map(&jobs, workers, &cancel, &progress, &|job| {
-                    run_std_job(job, &targets, params.timeout, &cancel)
+                let timeout = if params.fast {
+                    params.timeout.min(FAST_TIMEOUT)
+                } else {
+                    params.timeout
+                };
+                let http_total = jobs
+                    .iter()
+                    .filter(|j| matches!(j.kind, StdJobKind::Http(..)))
+                    .count();
+                let need = (http_total as f64 * PASS_RATIO).ceil() as usize;
+                // Флаг конкретной конфигурации: отдельно от общей отмены, чтобы
+                // можно было прекратить заведомо провальный прогон, не останавливая тест.
+                let local = AtomicBool::new(false);
+                let local = Arc::new(local);
+                let stop = AtomicBool::new(false);
+                let bad = AtomicUsize::new(0);
+                let done = std::thread::scope(|scope| {
+                    scope.spawn(|| {
+                        while !stop.load(Ordering::Relaxed) {
+                            if cancel.load(Ordering::Relaxed) {
+                                local.store(true, Ordering::Relaxed);
+                            }
+                            std::thread::sleep(Duration::from_millis(20));
+                        }
+                    });
+                    let done = parallel::map(&jobs, workers, &local, &progress, &|job| {
+                        let r = run_std_job(job, &targets, timeout, &local);
+                        if let (true, StdDone::Http(_, c)) = (params.fast, &r) {
+                            if *c != Check::Ok {
+                                let b = bad.fetch_add(1, Ordering::Relaxed) + 1;
+                                // Даже если все остальные пройдут, порог уже не взять.
+                                if http_total - b < need {
+                                    local.store(true, Ordering::Relaxed);
+                                }
+                            }
+                        }
+                        r
+                    });
+                    stop.store(true, Ordering::Relaxed);
+                    done
                 });
                 assemble_std(&targets, &jobs, done)
             }
             Kind::Dpi => {
                 let payload = payload.as_deref().unwrap_or_default();
-                parallel::map(&dpi_targets, params.parallel, &cancel, &progress, &|t| {
+                // Каждая цель сама запускает 3 соединения, поэтому целей берём с запасом.
+                let dpi_workers = (params.parallel * 2).clamp(1, 48);
+                parallel::map(&dpi_targets, dpi_workers, &cancel, &progress, &|t| {
                     Outcome::Dpi(check_dpi(
                         t,
                         payload,
@@ -570,11 +644,17 @@ fn run(
         if cancel.load(Ordering::Relaxed) {
             break;
         }
-        tx.send(Event::Report(Report {
+        let report = Report {
             config: cfg.name.clone(),
             error: None,
             outcomes,
-        }));
+        };
+        let good = params.fast && report.passes();
+        tx.send(Event::Report(report));
+        if good {
+            tx.log(format!("[{}] подходит — остальные не проверяю", cfg.name));
+            break;
+        }
     }
 
     zapret::stop();
@@ -675,6 +755,27 @@ pub fn save_report(data: &Path, kind: Kind, reports: &[Report]) -> std::io::Resu
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn std_report(ok: usize, bad: usize) -> Report {
+        let mut checks = vec![("HTTP", Check::Ok); ok];
+        checks.extend(vec![("HTTP", Check::Error); bad]);
+        Report {
+            config: "x".into(),
+            error: None,
+            outcomes: vec![Outcome::Std(StdResult {
+                name: "t".into(),
+                checks,
+                ping: None,
+            })],
+        }
+    }
+
+    #[test]
+    fn pass_threshold() {
+        assert!(std_report(8, 2).passes());
+        assert!(!std_report(7, 3).passes());
+        assert!(!std_report(0, 0).passes());
+    }
 
     #[test]
     fn network_primitives() {

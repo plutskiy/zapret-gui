@@ -270,6 +270,7 @@ impl App {
             parallel: self.settings.test_parallel,
             timeout: self.settings.test_timeout,
             dpi_range: self.settings.dpi_range,
+            fast: self.test.auto,
         };
         self.log(format!("Запуск теста: {} конфигураций", selected.len()));
         self.test.handle = Some(tester::spawn(
