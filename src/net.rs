@@ -1,11 +1,12 @@
 use std::io::{self, ErrorKind, Read, Write};
 use std::net::{SocketAddr, TcpStream, ToSocketAddrs};
-use std::sync::{Arc, OnceLock};
+use std::process::Stdio;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, OnceLock, mpsc};
 use std::time::{Duration, Instant};
 
-use rustls::{ClientConfig, ClientConnection, RootCertStore, StreamOwned};
-
 use crate::sys;
+use rustls::{ClientConfig, ClientConnection, RootCertStore, StreamOwned};
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Tls {
@@ -16,6 +17,7 @@ pub enum Tls {
 
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub enum Fail {
+    Cancelled,
     Dns,
     Timeout,
     Reset,
@@ -27,6 +29,7 @@ pub enum Fail {
 impl Fail {
     pub fn describe(&self) -> String {
         match self {
+            Fail::Cancelled => "отменено".into(),
             Fail::Dns => "DNS не резолвится".into(),
             Fail::Timeout => "таймаут".into(),
             Fail::Reset => "соединение сброшено".into(),
@@ -47,6 +50,7 @@ pub struct Request<'a> {
     pub connect_timeout: Duration,
     pub max_body: u64,
     pub keep_body: bool,
+    pub cancel: Option<Arc<AtomicBool>>,
 }
 
 impl<'a> Request<'a> {
@@ -61,7 +65,13 @@ impl<'a> Request<'a> {
             connect_timeout: Duration::from_secs(timeout.min(2)),
             max_body: 0,
             keep_body: false,
+            cancel: None,
         }
+    }
+
+    pub fn with_cancel(mut self, cancel: &Arc<AtomicBool>) -> Self {
+        self.cancel = Some(cancel.clone());
+        self
     }
 }
 
@@ -75,12 +85,13 @@ pub struct Response {
     pub fail: Option<Fail>,
 }
 
-
 fn config(tls: Tls) -> Arc<ClientConfig> {
     static CONFIGS: OnceLock<[Arc<ClientConfig>; 3]> = OnceLock::new();
     let all = CONFIGS.get_or_init(|| {
         let build = |versions: &[&'static rustls::SupportedProtocolVersion]| {
-            let roots = RootCertStore { roots: webpki_roots::TLS_SERVER_ROOTS.to_vec() };
+            let roots = RootCertStore {
+                roots: webpki_roots::TLS_SERVER_ROOTS.to_vec(),
+            };
             let provider = Arc::new(rustls::crypto::ring::default_provider());
             Arc::new(
                 ClientConfig::builder_with_provider(provider)
@@ -126,7 +137,12 @@ fn parse_url(url: &str) -> Option<Target> {
         },
         None => (hostport, default_port),
     };
-    (!host.is_empty()).then(|| Target { https, host: host.to_string(), port, path })
+    (!host.is_empty()).then(|| Target {
+        https,
+        host: host.to_string(),
+        port,
+        path,
+    })
 }
 
 fn map_io(e: &io::Error) -> Fail {
@@ -138,7 +154,10 @@ fn map_io(e: &io::Error) -> Fail {
     }
     match e.kind() {
         ErrorKind::TimedOut | ErrorKind::WouldBlock => Fail::Timeout,
-        ErrorKind::ConnectionReset | ErrorKind::ConnectionAborted | ErrorKind::BrokenPipe | ErrorKind::UnexpectedEof => Fail::Reset,
+        ErrorKind::ConnectionReset
+        | ErrorKind::ConnectionAborted
+        | ErrorKind::BrokenPipe
+        | ErrorKind::UnexpectedEof => Fail::Reset,
         ErrorKind::ConnectionRefused => Fail::Refused,
         _ => Fail::Other(e.to_string()),
     }
@@ -147,16 +166,23 @@ fn map_io(e: &io::Error) -> Fail {
 struct Deadline<'a> {
     sock: &'a TcpStream,
     at: Instant,
+    cancel: Option<&'a AtomicBool>,
 }
 
 impl Deadline<'_> {
     fn arm(&self) -> Result<(), Fail> {
+        if self.cancel.is_some_and(|flag| flag.load(Ordering::Relaxed)) {
+            return Err(Fail::Cancelled);
+        }
         let left = self.at.saturating_duration_since(Instant::now());
         if left.is_zero() {
             return Err(Fail::Timeout);
         }
-        let _ = self.sock.set_read_timeout(Some(left));
-        let _ = self.sock.set_write_timeout(Some(left));
+        let poll = self
+            .cancel
+            .map_or(left, |_| left.min(Duration::from_millis(100)));
+        let _ = self.sock.set_read_timeout(Some(poll));
+        let _ = self.sock.set_write_timeout(Some(poll));
         Ok(())
     }
 }
@@ -171,9 +197,40 @@ pub fn perform(req: &Request) -> Response {
     resp
 }
 
+fn resolve(target: &Target, req: &Request, deadline: Instant) -> Result<Vec<SocketAddr>, Fail> {
+    let Some(cancel) = req.cancel.as_deref() else {
+        return (target.host.as_str(), target.port)
+            .to_socket_addrs()
+            .map(|a| a.collect())
+            .map_err(|_| Fail::Dns);
+    };
+    let (tx, rx) = mpsc::channel();
+    let (host, port) = (target.host.clone(), target.port);
+    std::thread::spawn(move || {
+        let _ = tx.send(
+            (host.as_str(), port)
+                .to_socket_addrs()
+                .map(|a| a.collect::<Vec<_>>()),
+        );
+    });
+    loop {
+        match rx.recv_timeout(Duration::from_millis(20)) {
+            Ok(Ok(addrs)) => return Ok(addrs),
+            Ok(Err(_)) | Err(mpsc::RecvTimeoutError::Disconnected) => return Err(Fail::Dns),
+            Err(mpsc::RecvTimeoutError::Timeout) => {
+                if cancel.load(Ordering::Relaxed) {
+                    return Err(Fail::Cancelled);
+                }
+                if Instant::now() >= deadline {
+                    return Err(Fail::Timeout);
+                }
+            }
+        }
+    }
+}
+
 fn connect(target: &Target, req: &Request, deadline: Instant) -> Result<TcpStream, Fail> {
-    let mut addrs: Vec<SocketAddr> =
-        (target.host.as_str(), target.port).to_socket_addrs().map_err(|_| Fail::Dns)?.collect();
+    let mut addrs = resolve(target, req, deadline)?;
     if addrs.is_empty() {
         return Err(Fail::Dns);
     }
@@ -184,7 +241,30 @@ fn connect(target: &Target, req: &Request, deadline: Instant) -> Result<TcpStrea
         if left.is_zero() {
             return Err(Fail::Timeout);
         }
-        match TcpStream::connect_timeout(&addr, req.connect_timeout.min(left)) {
+        let connect_limit = req.connect_timeout.min(left);
+        let result = match req.cancel.as_deref() {
+            None => TcpStream::connect_timeout(&addr, connect_limit),
+            Some(cancel) => {
+                let (tx, rx) = mpsc::channel();
+                std::thread::spawn(move || {
+                    let _ = tx.send(TcpStream::connect_timeout(&addr, connect_limit));
+                });
+                loop {
+                    match rx.recv_timeout(Duration::from_millis(20)) {
+                        Ok(r) => break r,
+                        Err(mpsc::RecvTimeoutError::Timeout) => {
+                            if cancel.load(Ordering::Relaxed) {
+                                return Err(Fail::Cancelled);
+                            }
+                        }
+                        Err(mpsc::RecvTimeoutError::Disconnected) => {
+                            return Err(Fail::Other("connect".into()));
+                        }
+                    }
+                }
+            }
+        };
+        match result {
             Ok(s) => return Ok(s),
             Err(e) => last = map_io(&e),
         }
@@ -197,18 +277,30 @@ fn run(req: &Request, deadline: Instant, resp: &mut Response) -> Result<(), Fail
     let tcp = connect(&target, req, deadline)?;
     let _ = tcp.set_nodelay(true);
     let ctl = tcp.try_clone().map_err(|e| map_io(&e))?;
-    let dl = Deadline { sock: &ctl, at: deadline };
+    let dl = Deadline {
+        sock: &ctl,
+        at: deadline,
+        cancel: req.cancel.as_deref(),
+    };
 
     if target.https {
-        let name = rustls::pki_types::ServerName::try_from(target.host.clone()).map_err(|_| Fail::Other("некорректное имя хоста".into()))?;
-        let conn = ClientConnection::new(config(req.tls), name).map_err(|e| Fail::Other(e.to_string()))?;
+        let name = rustls::pki_types::ServerName::try_from(target.host.clone())
+            .map_err(|_| Fail::Other("некорректное имя хоста".into()))?;
+        let conn =
+            ClientConnection::new(config(req.tls), name).map_err(|e| Fail::Other(e.to_string()))?;
         exchange(StreamOwned::new(conn, tcp), &target, req, &dl, resp)
     } else {
         exchange(tcp, &target, req, &dl, resp)
     }
 }
 
-fn exchange<S: Read + Write>(mut s: S, target: &Target, req: &Request, dl: &Deadline, resp: &mut Response) -> Result<(), Fail> {
+fn exchange<S: Read + Write>(
+    mut s: S,
+    target: &Target,
+    req: &Request,
+    dl: &Deadline,
+    resp: &mut Response,
+) -> Result<(), Fail> {
     let method = if req.head {
         "HEAD"
     } else if req.body.is_some() {
@@ -224,20 +316,19 @@ fn exchange<S: Read + Write>(mut s: S, target: &Target, req: &Request, dl: &Dead
         head.push_str(&format!("Range: bytes=0-{}\r\n", n.saturating_sub(1)));
     }
     if let Some(b) = req.body {
-        head.push_str(&format!("Content-Type: application/octet-stream\r\nContent-Length: {}\r\n", b.len()));
+        head.push_str(&format!(
+            "Content-Type: application/octet-stream\r\nContent-Length: {}\r\n",
+            b.len()
+        ));
     }
     head.push_str("\r\n");
 
     let write_result = (|| -> Result<(), Fail> {
-        dl.arm()?;
-        s.write_all(head.as_bytes()).map_err(|e| map_io(&e))?;
-        for chunk in req.body.unwrap_or(&[]).chunks(4096) {
-            dl.arm()?;
-            s.write_all(chunk).map_err(|e| map_io(&e))?;
-            resp.up += chunk.len() as u64;
+        write_all(&mut s, head.as_bytes(), dl, None)?;
+        if let Some(body) = req.body {
+            write_all(&mut s, body, dl, Some(&mut resp.up))?;
         }
-        dl.arm()?;
-        s.flush().map_err(|e| map_io(&e))
+        retry(dl, || s.flush())
     })();
 
     let read_result = read_response(&mut s, req, dl, resp);
@@ -248,7 +339,46 @@ fn exchange<S: Read + Write>(mut s: S, target: &Target, req: &Request, dl: &Dead
     }
 }
 
-fn read_response<S: Read>(s: &mut S, req: &Request, dl: &Deadline, resp: &mut Response) -> Result<(), Fail> {
+fn is_poll_timeout(e: &io::Error) -> bool {
+    matches!(e.kind(), ErrorKind::TimedOut | ErrorKind::WouldBlock)
+}
+
+fn retry<T>(dl: &Deadline, mut f: impl FnMut() -> io::Result<T>) -> Result<T, Fail> {
+    loop {
+        dl.arm()?;
+        match f() {
+            Ok(v) => return Ok(v),
+            Err(e) if is_poll_timeout(&e) => {}
+            Err(e) => return Err(map_io(&e)),
+        }
+    }
+}
+
+fn write_all<S: Write>(
+    s: &mut S,
+    mut data: &[u8],
+    dl: &Deadline,
+    mut sent: Option<&mut u64>,
+) -> Result<(), Fail> {
+    while !data.is_empty() {
+        let n = retry(dl, || s.write(&data[..data.len().min(4096)]))?;
+        if n == 0 {
+            return Err(Fail::Reset);
+        }
+        data = &data[n..];
+        if let Some(c) = sent.as_deref_mut() {
+            *c += n as u64;
+        }
+    }
+    Ok(())
+}
+
+fn read_response<S: Read>(
+    s: &mut S,
+    req: &Request,
+    dl: &Deadline,
+    resp: &mut Response,
+) -> Result<(), Fail> {
     let mut buf = Vec::new();
     let mut chunk = [0u8; 8192];
     let mut header_end = None;
@@ -262,6 +392,7 @@ fn read_response<S: Read>(s: &mut S, req: &Request, dl: &Deadline, resp: &mut Re
         let n = match s.read(&mut chunk) {
             Ok(0) => break,
             Ok(n) => n,
+            Err(e) if is_poll_timeout(&e) => continue,
             Err(e) if e.kind() == ErrorKind::UnexpectedEof && header_end.is_some() => break,
             Err(e) => return Err(map_io(&e)),
         };
@@ -322,7 +453,7 @@ fn dechunk(data: &[u8]) -> Vec<u8> {
     out
 }
 
-pub fn ping(host: &str) -> Option<u32> {
+pub fn ping_cancellable(host: &str, cancel: &AtomicBool) -> Option<u32> {
     let mut cmd = sys::hidden("ping");
     if cfg!(windows) {
         cmd.args(["-n", "1", "-w", "1000", host]);
@@ -331,17 +462,47 @@ pub fn ping(host: &str) -> Option<u32> {
     } else {
         cmd.args(["-c", "1", "-W", "1", host]);
     }
-    let out = cmd.output().ok()?;
-    let text = String::from_utf8_lossy(&out.stdout);
+    cmd.stdout(Stdio::piped()).stderr(Stdio::null());
+    let mut child = cmd.spawn().ok()?;
+    loop {
+        match child.try_wait() {
+            Ok(Some(_)) => break,
+            Ok(None) if cancel.load(Ordering::Relaxed) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return None;
+            }
+            Ok(None) => std::thread::sleep(Duration::from_millis(20)),
+            Err(_) => return None,
+        }
+    }
+    let mut stdout = Vec::new();
+    child.stdout.take()?.read_to_end(&mut stdout).ok()?;
+    let text = String::from_utf8_lossy(&stdout);
     for line in text.lines() {
         let upper = line.to_ascii_uppercase();
-        let Some(ttl) = upper.find("TTL=") else { continue };
+        let Some(ttl) = upper.find("TTL=") else {
+            continue;
+        };
         if !cfg!(windows) {
             let pos = upper.find("TIME=")? + 5;
-            let num: String = line[pos..].chars().take_while(|c| c.is_ascii_digit() || *c == '.').collect();
-            return Some(num.parse::<f64>().map(|v| v.round() as u32).unwrap_or(1).max(1));
+            let num: String = line[pos..]
+                .chars()
+                .take_while(|c| c.is_ascii_digit() || *c == '.')
+                .collect();
+            return Some(
+                num.parse::<f64>()
+                    .map(|v| v.round() as u32)
+                    .unwrap_or(1)
+                    .max(1),
+            );
         }
-        let digits: String = line[..ttl].chars().rev().skip_while(|c| !c.is_ascii_digit()).take_while(|c| c.is_ascii_digit()).collect();
+        let digits: String = line[..ttl]
+            .chars()
+            .rev()
+            .skip_while(|c| !c.is_ascii_digit())
+            .take_while(|c| c.is_ascii_digit())
+            .collect();
         let digits: String = digits.chars().rev().collect();
         return Some(digits.parse().unwrap_or(1).max(1));
     }

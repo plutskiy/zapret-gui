@@ -1,0 +1,58 @@
+/* ===========================================================================
+   Celimos — Spacing, sizing & radius tokens
+   8px base grid with 2/4px micro-steps. Spacious by default.
+   =========================================================================== */
+
+:root {
+  /* --- Space scale --- */
+  --space-0:   0;
+  --space-1:   2px;
+  --space-2:   4px;
+  --space-3:   8px;
+  --space-4:   12px;
+  --space-5:   16px;
+  --space-6:   20px;
+  --space-7:   24px;
+  --space-8:   32px;
+  --space-9:   40px;
+  --space-10:  48px;
+  --space-11:  64px;
+  --space-12:  80px;
+  --space-13:  96px;
+
+  /* --- Radii --- */
+  --radius-xs:   4px;
+  --radius-sm:   6px;
+  --radius-md:   10px;   /* default control / card */
+  --radius-lg:   14px;   /* large card, album tile */
+  --radius-xl:   20px;   /* now-playing panel, dialog */
+  --radius-2xl:  28px;
+  --radius-pill: 999px;  /* chips, segmented control, play FAB */
+  --radius-round: 50%;   /* avatars, artist circles */
+
+  /* --- Control sizing --- */
+  --control-h-sm:  28px;
+  --control-h-md:  36px;
+  --control-h-lg:  44px;   /* macOS-friendly hit target minimum */
+  --control-h-xl:  56px;
+
+  --icon-sm:  16px;
+  --icon-md:  20px;
+  --icon-lg:  24px;
+  --icon-xl:  28px;
+
+  /* --- App layout rails --- */
+  --sidebar-w:      256px;
+  --queue-w:        340px;
+  --playbar-h:      80px;     /* bottom now-playing bar */
+  --titlebar-h:     40px;     /* custom macOS chrome strip */
+  --content-pad:    var(--space-9);  /* 40px page gutters (spacious) */
+  --shelf-gap:      var(--space-7);  /* between cards in a shelf */
+  --row-h:          56px;     /* track-list row */
+
+  /* --- Cover-art tile sizes --- */
+  --tile-sm:  64px;
+  --tile-md:  160px;
+  --tile-lg:  200px;
+  --tile-xl:  240px;
+}

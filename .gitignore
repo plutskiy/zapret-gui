@@ -1,2 +1,6 @@
 /target
 /.idea
+
+/data/test results/
+/data/lists/*.backup
+/data/lists/*.test-backup.txt

@@ -10,6 +10,8 @@ mod sites;
 mod sys;
 mod telegram;
 mod tester;
+mod tg_ws;
+mod theme;
 mod zapret;
 
 fn main() -> eframe::Result {
@@ -19,8 +21,14 @@ fn main() -> eframe::Result {
     }
 
     let options = eframe::NativeOptions {
-        viewport: egui::ViewportBuilder::default().with_inner_size([560.0, 820.0]).with_min_inner_size([420.0, 560.0]),
+        viewport: egui::ViewportBuilder::default()
+            .with_inner_size([960.0, 680.0])
+            .with_min_inner_size([420.0, 560.0]),
         ..Default::default()
     };
-    eframe::run_native("Zapret GUI", options, Box::new(|cc| Ok(Box::new(app::App::new(cc)))))
+    eframe::run_native(
+        "Zapret GUI",
+        options,
+        Box::new(|cc| Ok(Box::new(app::App::new(cc)))),
+    )
 }

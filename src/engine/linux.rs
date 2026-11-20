@@ -1,9 +1,11 @@
 use std::net::IpAddr;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
 use super::conntrack::Iface;
 use super::desync::*;
-use super::packet::Endpoint;
+use super::packet::{Endpoint, flow_hash};
+use super::pool::Pool;
 
 const NETLINK_NETFILTER: i32 = 12;
 const NFNL_SUBSYS_QUEUE: u16 = 3;
@@ -75,11 +77,29 @@ impl RawSock {
             let yes: i32 = 1;
             let pri: i32 = 6;
             let sndbuf: i32 = 32 * 1024;
-            libc::setsockopt(fd, libc::SOL_SOCKET, libc::SO_SNDBUF, (&sndbuf as *const i32).cast(), 4);
-            libc::setsockopt(fd, libc::SOL_SOCKET, libc::SO_PRIORITY, (&pri as *const i32).cast(), 4);
+            libc::setsockopt(
+                fd,
+                libc::SOL_SOCKET,
+                libc::SO_SNDBUF,
+                (&sndbuf as *const i32).cast(),
+                4,
+            );
+            libc::setsockopt(
+                fd,
+                libc::SOL_SOCKET,
+                libc::SO_PRIORITY,
+                (&pri as *const i32).cast(),
+                4,
+            );
             if domain == libc::AF_INET {
                 libc::setsockopt(fd, libc::IPPROTO_IP, 22, (&yes as *const i32).cast(), 4); // IP_NODEFRAG
-                libc::setsockopt(fd, libc::IPPROTO_IP, libc::IP_FREEBIND, (&yes as *const i32).cast(), 4);
+                libc::setsockopt(
+                    fd,
+                    libc::IPPROTO_IP,
+                    libc::IP_FREEBIND,
+                    (&yes as *const i32).cast(),
+                    4,
+                );
             } else {
                 libc::setsockopt(fd, libc::IPPROTO_IPV6, 78, (&yes as *const i32).cast(), 4); // IPV6_FREEBIND
             }
@@ -92,7 +112,10 @@ impl RawSock {
         if s4 < 0 {
             return Err(format!("raw socket: {}", std::io::Error::last_os_error()));
         }
-        Ok(RawSock { s4, s6: Self::open_one(libc::AF_INET6) })
+        Ok(RawSock {
+            s4,
+            s6: Self::open_one(libc::AF_INET6),
+        })
     }
 }
 
@@ -114,19 +137,39 @@ impl Io for RawSock {
             if sock < 0 {
                 return false;
             }
-            libc::setsockopt(sock, libc::SOL_SOCKET, libc::SO_MARK, (&fwmark as *const u32).cast(), 4);
+            libc::setsockopt(
+                sock,
+                libc::SOL_SOCKET,
+                libc::SO_MARK,
+                (&fwmark as *const u32).cast(),
+                4,
+            );
             let r = match dst.ip {
                 IpAddr::V4(a) => {
                     let mut sa: libc::sockaddr_in = std::mem::zeroed();
                     sa.sin_family = libc::AF_INET as u16;
                     sa.sin_addr.s_addr = u32::from_ne_bytes(a.octets());
-                    libc::sendto(sock, data.as_ptr().cast(), data.len(), 0, (&sa as *const libc::sockaddr_in).cast(), size_of::<libc::sockaddr_in>() as u32)
+                    libc::sendto(
+                        sock,
+                        data.as_ptr().cast(),
+                        data.len(),
+                        0,
+                        (&sa as *const libc::sockaddr_in).cast(),
+                        size_of::<libc::sockaddr_in>() as u32,
+                    )
                 }
                 IpAddr::V6(a) => {
                     let mut sa: libc::sockaddr_in6 = std::mem::zeroed();
                     sa.sin6_family = libc::AF_INET6 as u16;
                     sa.sin6_addr.s6_addr = a.octets();
-                    libc::sendto(sock, data.as_ptr().cast(), data.len(), 0, (&sa as *const libc::sockaddr_in6).cast(), size_of::<libc::sockaddr_in6>() as u32)
+                    libc::sendto(
+                        sock,
+                        data.as_ptr().cast(),
+                        data.len(),
+                        0,
+                        (&sa as *const libc::sockaddr_in6).cast(),
+                        size_of::<libc::sockaddr_in6>() as u32,
+                    )
                 }
             };
             r >= 0
@@ -138,8 +181,33 @@ pub struct Queue {
     fd: i32,
     qnum: u16,
     fwmark: u32,
-    raw: RawSock,
+    raws: Vec<RawSock>,
     seq: u32,
+    verdicts: Arc<Verdicts>,
+}
+
+struct Verdicts {
+    fd: i32,
+    qnum: u16,
+    seq: AtomicU32,
+}
+
+impl Verdicts {
+    fn send(&self, id: u32, v: u32, mark: u32, payload: Option<&[u8]>) {
+        let mut a = Vec::new();
+        let mut vh = v.to_be_bytes().to_vec();
+        vh.extend_from_slice(&id.to_be_bytes());
+        attr(&mut a, NFQA_VERDICT_HDR, &vh);
+        attr(&mut a, NFQA_MARK, &mark.to_be_bytes());
+        if let Some(p) = payload {
+            attr(&mut a, NFQA_PAYLOAD, p);
+        }
+        let seq = self.seq.fetch_add(1, Ordering::Relaxed);
+        let m = nl_msg(NFQNL_MSG_VERDICT, NLM_F_REQUEST, seq, self.qnum, 0, &a);
+        unsafe {
+            libc::send(self.fd, m.as_ptr().cast(), m.len(), 0);
+        }
+    }
 }
 
 unsafe impl Send for Queue {}
@@ -169,7 +237,14 @@ impl Queue {
 
     fn cfg(&mut self, family: u8, attrs: &[u8]) -> Result<(), String> {
         self.seq += 1;
-        let m = nl_msg(NFQNL_MSG_CONFIG, NLM_F_REQUEST | NLM_F_ACK, self.seq, self.qnum, family, attrs);
+        let m = nl_msg(
+            NFQNL_MSG_CONFIG,
+            NLM_F_REQUEST | NLM_F_ACK,
+            self.seq,
+            self.qnum,
+            family,
+            attrs,
+        );
         self.xact(&m)
     }
 
@@ -179,34 +254,88 @@ impl Queue {
         self.cfg(family, &a)
     }
 
-    pub fn open(qnum: i32, fwmark: u32) -> Result<Queue, String> {
+    pub fn open(qnum: i32, fwmark: u32, shards: usize) -> Result<Queue, String> {
         if qnum < 0 {
             return Err("Need queue number (--qnum)".into());
         }
-        let raw = RawSock::new()?;
-        let fd = unsafe { libc::socket(libc::AF_NETLINK, libc::SOCK_RAW | libc::SOCK_CLOEXEC, NETLINK_NETFILTER) };
+        let raws = (0..shards.max(1))
+            .map(|_| RawSock::new())
+            .collect::<Result<Vec<_>, _>>()?;
+        let fd = unsafe {
+            libc::socket(
+                libc::AF_NETLINK,
+                libc::SOCK_RAW | libc::SOCK_CLOEXEC,
+                NETLINK_NETFILTER,
+            )
+        };
         if fd < 0 {
-            return Err(format!("netlink socket: {}", std::io::Error::last_os_error()));
+            return Err(format!(
+                "netlink socket: {}",
+                std::io::Error::last_os_error()
+            ));
         }
         unsafe {
             let mut sa: libc::sockaddr_nl = std::mem::zeroed();
             sa.nl_family = libc::AF_NETLINK as u16;
-            if libc::bind(fd, (&sa as *const libc::sockaddr_nl).cast(), size_of::<libc::sockaddr_nl>() as u32) < 0 {
+            if libc::bind(
+                fd,
+                (&sa as *const libc::sockaddr_nl).cast(),
+                size_of::<libc::sockaddr_nl>() as u32,
+            ) < 0
+            {
                 let e = std::io::Error::last_os_error();
                 libc::close(fd);
                 return Err(format!("netlink bind: {e}"));
             }
-            let tv = libc::timeval { tv_sec: 0, tv_usec: 300_000 };
-            libc::setsockopt(fd, libc::SOL_SOCKET, libc::SO_RCVTIMEO, (&tv as *const libc::timeval).cast(), size_of::<libc::timeval>() as u32);
+            let tv = libc::timeval {
+                tv_sec: 0,
+                tv_usec: 300_000,
+            };
+            libc::setsockopt(
+                fd,
+                libc::SOL_SOCKET,
+                libc::SO_RCVTIMEO,
+                (&tv as *const libc::timeval).cast(),
+                size_of::<libc::timeval>() as u32,
+            );
             let rb: i32 = Q_RCVBUF;
-            libc::setsockopt(fd, libc::SOL_SOCKET, libc::SO_RCVBUF, (&rb as *const i32).cast(), 4);
+            libc::setsockopt(
+                fd,
+                libc::SOL_SOCKET,
+                libc::SO_RCVBUF,
+                (&rb as *const i32).cast(),
+                4,
+            );
             let yes: i32 = 1;
             libc::setsockopt(fd, 270, 5, (&yes as *const i32).cast(), 4); // SOL_NETLINK, NETLINK_NO_ENOBUFS
         }
-        let mut q = Queue { fd, qnum: qnum as u16, fwmark, raw, seq: 0 };
-        let _ = q.cmd(libc::AF_INET as u8, NFQNL_CFG_CMD_PF_UNBIND, libc::AF_INET as u16);
-        let _ = q.cmd(libc::AF_INET as u8, NFQNL_CFG_CMD_PF_BIND, libc::AF_INET as u16);
-        q.cmd(0, NFQNL_CFG_CMD_BIND, 0).map_err(|e| format!("не удалось привязать NFQUEUE {qnum} (нужны root и модуль nfnetlink_queue): {e}"))?;
+        let mut q = Queue {
+            fd,
+            qnum: qnum as u16,
+            fwmark,
+            raws,
+            seq: 0,
+            verdicts: Arc::new(Verdicts {
+                fd,
+                qnum: qnum as u16,
+                seq: AtomicU32::new(1 << 24),
+            }),
+        };
+        let _ = q.cmd(
+            libc::AF_INET as u8,
+            NFQNL_CFG_CMD_PF_UNBIND,
+            libc::AF_INET as u16,
+        );
+        let _ = q.cmd(
+            libc::AF_INET as u8,
+            NFQNL_CFG_CMD_PF_BIND,
+            libc::AF_INET as u16,
+        );
+        q.cmd(0, NFQNL_CFG_CMD_BIND, 0).map_err(|e| {
+            format!(
+                "не удалось привязать NFQUEUE {qnum} (нужны root и модуль nfnetlink_queue): {e}"
+            )
+        })?;
         let mut p = Vec::new();
         let mut params = 0xFFFFu32.to_be_bytes().to_vec();
         params.push(2); // NFQNL_COPY_PACKET
@@ -222,29 +351,37 @@ impl Queue {
         Ok(q)
     }
 
-    fn verdict(&mut self, id: u32, v: u32, mark: u32, payload: Option<&[u8]>) {
-        let mut a = Vec::new();
-        let mut vh = v.to_be_bytes().to_vec();
-        vh.extend_from_slice(&id.to_be_bytes());
-        attr(&mut a, NFQA_VERDICT_HDR, &vh);
-        attr(&mut a, NFQA_MARK, &mark.to_be_bytes());
-        if let Some(p) = payload {
-            attr(&mut a, NFQA_PAYLOAD, p);
-        }
-        self.seq += 1;
-        let m = nl_msg(NFQNL_MSG_VERDICT, NLM_F_REQUEST, self.seq, self.qnum, 0, &a);
-        unsafe {
-            libc::send(self.fd, m.as_ptr().cast(), m.len(), 0);
-        }
-    }
-
-    pub fn run(&mut self, engine: &mut Engine, stop: &AtomicBool) {
+    pub fn run(&mut self, engines: Vec<Engine>, stop: &AtomicBool) -> Result<(), String> {
+        let mut raws = std::mem::take(&mut self.raws).into_iter();
+        let verdicts = self.verdicts.clone();
+        let pool: Pool<Job> = Pool::new(engines, |_| {
+            let mut raw = raws.next().expect("one raw socket per shard");
+            let verdicts = verdicts.clone();
+            move |engine: &mut Engine, job: Job| process_job(engine, &mut raw, &verdicts, job)
+        })?;
         let mut buf = vec![0u8; 65536];
+        let mut failures = 0u32;
         while !stop.load(Ordering::SeqCst) {
             let n = unsafe { libc::recv(self.fd, buf.as_mut_ptr().cast(), buf.len(), 0) };
             if n < 0 {
-                continue;
+                let err = std::io::Error::last_os_error();
+                match err.raw_os_error() {
+                    Some(libc::EINTR | libc::EAGAIN | libc::ENOBUFS) => {
+                        failures = 0;
+                        continue;
+                    }
+                    _ => {
+                        crate::dlog!("nfqueue: recv failed: {err}");
+                        failures += 1;
+                        if failures >= 100 {
+                            break;
+                        }
+                        std::thread::sleep(std::time::Duration::from_millis(50));
+                        continue;
+                    }
+                }
             }
+            failures = 0;
             let n = n as usize;
             let mut off = 0usize;
             while off + 16 <= n {
@@ -254,16 +391,17 @@ impl Queue {
                 }
                 let typ = u16::from_ne_bytes([buf[off + 4], buf[off + 5]]);
                 if typ == (NFNL_SUBSYS_QUEUE << 8) | NFQNL_MSG_PACKET && len >= 20 {
-                    let msg = buf[off + 20..off + len].to_vec();
-                    self.handle_packet(engine, &msg);
+                    self.handle_packet(&pool, &buf[off + 20..off + len]);
                 }
                 off += align4(len);
             }
         }
+        drop(pool);
         let _ = self.cmd(0, NFQNL_CFG_CMD_UNBIND, 0);
+        Ok(())
     }
 
-    fn handle_packet(&mut self, engine: &mut Engine, attrs: &[u8]) {
+    fn handle_packet(&self, pool: &Pool<Job>, attrs: &[u8]) {
         let (mut id, mut mark, mut indev, mut outdev) = (0u32, 0u32, 0u32, 0u32);
         let mut payload: Option<&[u8]> = None;
         let mut o = 0;
@@ -275,30 +413,68 @@ impl Queue {
             }
             let d = &attrs[o + 4..o + alen];
             match atyp {
-                NFQA_PACKET_HDR if d.len() >= 4 => id = u32::from_be_bytes([d[0], d[1], d[2], d[3]]),
+                NFQA_PACKET_HDR if d.len() >= 4 => {
+                    id = u32::from_be_bytes([d[0], d[1], d[2], d[3]])
+                }
                 NFQA_MARK if d.len() >= 4 => mark = u32::from_be_bytes([d[0], d[1], d[2], d[3]]),
-                NFQA_IFINDEX_INDEV if d.len() >= 4 => indev = u32::from_be_bytes([d[0], d[1], d[2], d[3]]),
-                NFQA_IFINDEX_OUTDEV if d.len() >= 4 => outdev = u32::from_be_bytes([d[0], d[1], d[2], d[3]]),
+                NFQA_IFINDEX_INDEV if d.len() >= 4 => {
+                    indev = u32::from_be_bytes([d[0], d[1], d[2], d[3]])
+                }
+                NFQA_IFINDEX_OUTDEV if d.len() >= 4 => {
+                    outdev = u32::from_be_bytes([d[0], d[1], d[2], d[3]])
+                }
                 NFQA_PAYLOAD => payload = Some(d),
                 _ => {}
             }
             o += align4(alen);
         }
         let Some(pl) = payload else {
-            self.verdict(id, NF_ACCEPT, mark, None);
+            self.verdicts.send(id, NF_ACCEPT, mark, None);
             return;
         };
         if mark & self.fwmark != 0 {
-            self.verdict(id, NF_ACCEPT, mark, None);
+            self.verdicts.send(id, NF_ACCEPT, mark, None);
             return;
         }
-        let mut packet = pl.to_vec();
-        let v = engine.process(&mut self.raw, mark, Iface { idx: indev, sub: 0 }, Iface { idx: outdev, sub: 0 }, &mut packet);
-        match v & VERDICT_MASK {
-            VERDICT_MODIFY => self.verdict(id, NF_ACCEPT, mark, Some(&packet)),
-            VERDICT_DROP => self.verdict(id, NF_DROP, mark, None),
-            _ => self.verdict(id, NF_ACCEPT, mark, None),
-        }
+        pool.dispatch(
+            flow_hash(pl),
+            Job {
+                id,
+                mark,
+                indev,
+                outdev,
+                packet: pl.to_vec(),
+            },
+        );
+    }
+}
+
+struct Job {
+    id: u32,
+    mark: u32,
+    indev: u32,
+    outdev: u32,
+    packet: Vec<u8>,
+}
+
+fn process_job(engine: &mut Engine, raw: &mut RawSock, verdicts: &Verdicts, mut job: Job) {
+    let v = engine.process(
+        raw,
+        job.mark,
+        Iface {
+            idx: job.indev,
+            sub: 0,
+        },
+        Iface {
+            idx: job.outdev,
+            sub: 0,
+        },
+        &mut job.packet,
+    );
+    match v & VERDICT_MASK {
+        VERDICT_MODIFY => verdicts.send(job.id, NF_ACCEPT, job.mark, Some(&job.packet)),
+        VERDICT_DROP => verdicts.send(job.id, NF_DROP, job.mark, None),
+        _ => verdicts.send(job.id, NF_ACCEPT, job.mark, None),
     }
 }
 

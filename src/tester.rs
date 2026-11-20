@@ -1,12 +1,12 @@
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::Sender;
-use std::sync::Arc;
 use std::time::Duration;
 
-use crate::zapret::{self, ConfigEntry};
 use crate::net::{self, Fail, Request, Tls};
+use crate::zapret::{self, ConfigEntry};
 use crate::{parallel, sys};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -129,10 +129,19 @@ impl Report {
 
 pub enum Event {
     Log(String),
-    ConfigStart { index: usize, total: usize, name: String },
-    Progress { done: usize, total: usize },
+    ConfigStart {
+        index: usize,
+        total: usize,
+        name: String,
+    },
+    Progress {
+        done: usize,
+        total: usize,
+    },
     Report(Report),
-    Finished { cancelled: bool },
+    Finished {
+        cancelled: bool,
+    },
 }
 
 pub struct Handle {
@@ -171,21 +180,28 @@ struct DpiTarget {
 }
 
 pub fn load_targets(data: &Path) -> Vec<Target> {
-    let text = fs::read_to_string(data.join("utils").join("targets.txt")).unwrap_or_default();
+    let text = fs::read_to_string(data.join("main.conf")).unwrap_or_default();
     let mut targets = Vec::new();
-    for line in text.lines() {
+    let section = text.split("\n[targets]").nth(1).unwrap_or_default();
+    for line in section.lines() {
         let line = line.trim();
         if line.starts_with('#') {
             continue;
         }
-        let Some((key, value)) = line.split_once('=') else { continue };
+        let Some((key, value)) = line.split_once('=') else {
+            continue;
+        };
         let name = key.trim().to_string();
         let value = value.trim().trim_matches('"').trim();
         if name.is_empty() || value.is_empty() {
             continue;
         }
         if let Some(ip) = value.strip_prefix("PING:") {
-            targets.push(Target { name, url: None, ping_host: ip.trim().to_string() });
+            targets.push(Target {
+                name,
+                url: None,
+                ping_host: ip.trim().to_string(),
+            });
         } else {
             let host = value
                 .trim_start_matches("https://")
@@ -194,7 +210,11 @@ pub fn load_targets(data: &Path) -> Vec<Target> {
                 .next()
                 .unwrap_or("")
                 .to_string();
-            targets.push(Target { name, url: Some(value.to_string()), ping_host: host });
+            targets.push(Target {
+                name,
+                url: Some(value.to_string()),
+                ping_host: host,
+            });
         }
     }
     if targets.is_empty() {
@@ -211,33 +231,104 @@ pub fn load_targets(data: &Path) -> Vec<Target> {
             });
         }
         for ip in ["1.1.1.1", "8.8.8.8", "9.9.9.9"] {
-            targets.push(Target { name: format!("PING_{ip}"), url: None, ping_host: ip.into() });
+            targets.push(Target {
+                name: format!("PING_{ip}"),
+                url: None,
+                ping_host: ip.into(),
+            });
         }
     }
     targets
 }
 
-const STD_TESTS: [(&str, Tls); 3] = [("HTTP", Tls::Auto), ("TLS1.2", Tls::V12), ("TLS1.3", Tls::V13)];
+const STD_TESTS: [(&str, Tls); 3] = [
+    ("HTTP", Tls::Auto),
+    ("TLS1.2", Tls::V12),
+    ("TLS1.3", Tls::V13),
+];
 
-fn http_check(url: &str, tls: Tls, timeout: u64) -> Check {
-    match net::perform(&Request::head(url, tls, timeout)).fail {
+fn http_check(url: &str, tls: Tls, timeout: u64, cancel: &Arc<AtomicBool>) -> Check {
+    match net::perform(&Request::head(url, tls, timeout).with_cancel(cancel)).fail {
         None => Check::Ok,
         Some(Fail::Dns | Fail::Cert) => Check::Ssl,
         Some(_) => Check::Error,
     }
 }
 
-fn check_standard(t: &Target, timeout: u64) -> StdResult {
-    let mut checks = Vec::new();
-    if let Some(url) = &t.url {
-        for (label, tls) in STD_TESTS {
-            checks.push((label, http_check(url, tls, timeout)));
-        }
-    }
-    StdResult { name: t.name.clone(), checks, ping: net::ping(&t.ping_host) }
+#[derive(Clone, Copy)]
+struct StdJob {
+    target: usize,
+    kind: StdJobKind,
 }
 
-fn fetch_dpi_suite(timeout: u64) -> Vec<DpiTarget> {
+#[derive(Clone, Copy)]
+enum StdJobKind {
+    Http(&'static str, Tls),
+    Ping,
+}
+
+enum StdDone {
+    Http(&'static str, Check),
+    Ping(Option<u32>),
+}
+
+fn std_jobs(targets: &[Target]) -> Vec<StdJob> {
+    let mut jobs = Vec::new();
+    for (target, t) in targets.iter().enumerate() {
+        if t.url.is_some() {
+            for (label, tls) in STD_TESTS {
+                jobs.push(StdJob {
+                    target,
+                    kind: StdJobKind::Http(label, tls),
+                });
+            }
+        }
+        jobs.push(StdJob {
+            target,
+            kind: StdJobKind::Ping,
+        });
+    }
+    jobs
+}
+
+fn run_std_job(
+    job: &StdJob,
+    targets: &[Target],
+    timeout: u64,
+    cancel: &Arc<AtomicBool>,
+) -> StdDone {
+    let t = &targets[job.target];
+    match job.kind {
+        StdJobKind::Http(label, tls) => StdDone::Http(
+            label,
+            t.url
+                .as_deref()
+                .map_or(Check::Error, |url| http_check(url, tls, timeout, cancel)),
+        ),
+        StdJobKind::Ping => StdDone::Ping(net::ping_cancellable(&t.ping_host, cancel)),
+    }
+}
+
+fn assemble_std(targets: &[Target], jobs: &[StdJob], done: Vec<Option<StdDone>>) -> Vec<Outcome> {
+    let mut results: Vec<StdResult> = targets
+        .iter()
+        .map(|t| StdResult {
+            name: t.name.clone(),
+            checks: Vec::new(),
+            ping: None,
+        })
+        .collect();
+    for (job, done) in jobs.iter().zip(done) {
+        match done {
+            Some(StdDone::Http(label, check)) => results[job.target].checks.push((label, check)),
+            Some(StdDone::Ping(ping)) => results[job.target].ping = ping,
+            None => {}
+        }
+    }
+    results.into_iter().map(Outcome::Std).collect()
+}
+
+fn fetch_dpi_suite(timeout: u64, cancel: &Arc<AtomicBool>) -> Vec<DpiTarget> {
     let url = "https://hyperion-cs.github.io/dpi-checkers/ru/tcp-16-20/suite.v2.json";
     let resp = net::perform(&Request {
         url,
@@ -249,19 +340,33 @@ fn fetch_dpi_suite(timeout: u64) -> Vec<DpiTarget> {
         connect_timeout: Duration::from_secs(5),
         max_body: 4 * 1024 * 1024,
         keep_body: true,
+        cancel: Some(cancel.clone()),
     });
     let Ok(serde_json::Value::Array(items)) = serde_json::from_slice(&resp.body) else {
         return Vec::new();
     };
-    let field = |v: &serde_json::Value, k: &str| v.get(k).and_then(|x| x.as_str()).unwrap_or("").to_string();
+    let field = |v: &serde_json::Value, k: &str| {
+        v.get(k).and_then(|x| x.as_str()).unwrap_or("").to_string()
+    };
     items
         .iter()
-        .map(|v| DpiTarget { id: field(v, "id"), provider: field(v, "provider"), country: field(v, "country"), host: field(v, "host") })
+        .map(|v| DpiTarget {
+            id: field(v, "id"),
+            provider: field(v, "provider"),
+            country: field(v, "country"),
+            host: field(v, "host"),
+        })
         .filter(|t| !t.host.is_empty())
         .collect()
 }
 
-fn check_dpi(t: &DpiTarget, payload: &[u8], timeout: u64, range: u64) -> DpiResult {
+fn check_dpi(
+    t: &DpiTarget,
+    payload: &[u8],
+    timeout: u64,
+    range: u64,
+    cancel: &Arc<AtomicBool>,
+) -> DpiResult {
     let url = format!("https://{}", t.host);
     let mut lines = Vec::new();
     for (label, tls) in STD_TESTS {
@@ -275,64 +380,59 @@ fn check_dpi(t: &DpiTarget, payload: &[u8], timeout: u64, range: u64) -> DpiResu
             connect_timeout: Duration::from_secs(timeout.min(3)),
             max_body: range,
             keep_body: false,
+            cancel: Some(cancel.clone()),
         });
         let status = match &resp.fail {
             None => DpiStatus::Ok,
-            Some(Fail::Timeout) if resp.up > 0 && resp.down == 0 && resp.time >= timeout as f64 => DpiStatus::LikelyBlocked,
+            Some(Fail::Timeout) if resp.up > 0 && resp.down == 0 && resp.time >= timeout as f64 => {
+                DpiStatus::LikelyBlocked
+            }
             Some(_) => DpiStatus::Fail,
         };
         lines.push(DpiLine {
             label,
-            code: resp.code.map(|c| c.to_string()).unwrap_or_else(|| "NA".into()),
+            code: resp
+                .code
+                .map(|c| c.to_string())
+                .unwrap_or_else(|| "NA".into()),
             up_kb: resp.up as f64 / 1024.0,
             down_kb: resp.down as f64 / 1024.0,
             time: resp.time,
             status,
         });
     }
-    DpiResult { id: t.id.clone(), provider: t.provider.clone(), country: t.country.clone(), lines }
+    DpiResult {
+        id: t.id.clone(),
+        provider: t.provider.clone(),
+        country: t.country.clone(),
+        lines,
+    }
 }
 
-struct IpsetGuard {
-    file: PathBuf,
-    backup: PathBuf,
-    active: bool,
-}
+struct IpsetGuard;
 
 impl IpsetGuard {
-    fn new(data: &Path) -> Self {
-        let lists = data.join("lists");
-        Self { file: lists.join("ipset-all.txt"), backup: lists.join("ipset-all.test-backup.txt"), active: false }
-    }
-
     fn set_any(&mut self) {
-        let current = fs::read_to_string(&self.file).unwrap_or_default();
-        if current.trim().is_empty() {
-            return;
-        }
-        if fs::copy(&self.file, &self.backup).is_ok() && fs::write(&self.file, "").is_ok() {
-            self.active = true;
-        }
+        crate::engine::lists::set_ipset_all_bypass(true);
     }
 
     fn restore(&mut self) {
-        if self.backup.exists() && fs::copy(&self.backup, &self.file).is_ok() {
-            let _ = fs::remove_file(&self.backup);
-        }
-        self.active = false;
+        crate::engine::lists::set_ipset_all_bypass(false);
     }
 }
 
 impl Drop for IpsetGuard {
     fn drop(&mut self) {
-        if self.active {
-            self.restore();
-        }
+        self.restore();
     }
 }
 
 pub fn restore_leftover_ipset(data: &Path) {
-    IpsetGuard::new(data).restore();
+    let lists = data.join("lists");
+    let backup = lists.join("ipset-all.test-backup.txt");
+    if backup.exists() && fs::copy(&backup, lists.join("ipset-all.txt")).is_ok() {
+        let _ = fs::remove_file(backup);
+    }
 }
 
 fn random_payload(len: usize) -> Vec<u8> {
@@ -363,57 +463,104 @@ pub fn spawn(
     let tx = Tx { tx, ctx };
     let flag = cancel.clone();
     std::thread::spawn(move || {
-        run(&data, &configs, &params, resume, &tx, &flag);
-        tx.send(Event::Finished { cancelled: flag.load(Ordering::Relaxed) });
+        run(&data, &configs, &params, resume, &tx, flag.clone());
+        tx.send(Event::Finished {
+            cancelled: flag.load(Ordering::Relaxed),
+        });
     });
     Handle { rx, cancel }
 }
 
-fn run(data: &Path, configs: &[ConfigEntry], params: &Params, resume: Option<ConfigEntry>, tx: &Tx, cancel: &AtomicBool) {
-    let mut ipset = IpsetGuard::new(data);
+fn run(
+    data: &Path,
+    configs: &[ConfigEntry],
+    params: &Params,
+    resume: Option<ConfigEntry>,
+    tx: &Tx,
+    cancel: Arc<AtomicBool>,
+) {
+    let mut ipset = IpsetGuard;
     let (targets, dpi_targets, payload) = match params.kind {
         Kind::Standard => (load_targets(data), Vec::new(), None),
         Kind::Dpi => {
             ipset.set_any();
             tx.log("Загрузка списка DPI-целей...");
-            let suite = fetch_dpi_suite(params.timeout);
+            let suite = fetch_dpi_suite(params.timeout, &cancel);
             if suite.is_empty() {
-                tx.log("Не удалось загрузить список DPI-целей (нужен доступ в интернет без zapret).");
+                tx.log(
+                    "Не удалось загрузить список DPI-целей (нужен доступ в интернет без zapret).",
+                );
                 return;
             }
             tx.log(format!("DPI-целей: {}", suite.len()));
-            (Vec::new(), suite, Some(random_payload(params.dpi_range as usize)))
+            (
+                Vec::new(),
+                suite,
+                Some(random_payload(params.dpi_range as usize)),
+            )
         }
     };
 
-    let total_targets = if params.kind == Kind::Standard { targets.len() } else { dpi_targets.len() };
-
+    let jobs = std_jobs(&targets);
+    let total_targets = if params.kind == Kind::Standard {
+        jobs.len()
+    } else {
+        dpi_targets.len()
+    };
     for (index, cfg) in configs.iter().enumerate() {
         if cancel.load(Ordering::Relaxed) {
             break;
         }
-        tx.send(Event::ConfigStart { index, total: configs.len(), name: cfg.name.clone() });
-        tx.send(Event::Progress { done: 0, total: total_targets });
+        tx.send(Event::ConfigStart {
+            index,
+            total: configs.len(),
+            name: cfg.name.clone(),
+        });
+        tx.send(Event::Progress {
+            done: 0,
+            total: total_targets,
+        });
 
+        if cancel.load(Ordering::Relaxed) {
+            break;
+        }
         if let Err(e) = zapret::start_config(data, cfg) {
             tx.log(format!("[{}] не запустилась: {e}", cfg.name));
-            tx.send(Event::Report(Report { config: cfg.name.clone(), error: Some(e), outcomes: Vec::new() }));
+            tx.send(Event::Report(Report {
+                config: cfg.name.clone(),
+                error: Some(e),
+                outcomes: Vec::new(),
+            }));
             continue;
         }
-        std::thread::sleep(Duration::from_millis(400));
+        if cancel.load(Ordering::Relaxed) {
+            break;
+        }
 
-        let progress = |done: usize| tx.send(Event::Progress { done, total: total_targets });
-        let outcomes: Vec<Outcome> = match params.kind {
-            Kind::Standard => parallel::map(&targets, params.parallel, cancel, &progress, &|t| {
-                Outcome::Std(check_standard(t, params.timeout))
+        let progress = |done: usize| {
+            tx.send(Event::Progress {
+                done,
+                total: total_targets,
             })
-            .into_iter()
-            .flatten()
-            .collect(),
+        };
+        let outcomes: Vec<Outcome> = match params.kind {
+            Kind::Standard => {
+                let workers = (params.parallel * 6).max(jobs.len()).min(96).max(1);
+                let done = parallel::map(&jobs, workers, &cancel, &progress, &|job| {
+                    run_std_job(job, &targets, params.timeout, &cancel)
+                });
+                assemble_std(&targets, &jobs, done)
+            }
             Kind::Dpi => {
                 let payload = payload.as_deref().unwrap_or_default();
-                parallel::map(&dpi_targets, params.parallel, cancel, &progress, &|t| {
-                    Outcome::Dpi(check_dpi(t, payload, params.timeout, params.dpi_range))
+                parallel::map(&dpi_targets, params.parallel, &cancel, &progress, &|t| {
+                    Outcome::Dpi(check_dpi(
+                        t,
+                        payload,
+                        params.timeout,
+                        params.dpi_range,
+                        &cancel,
+                    ))
                 })
                 .into_iter()
                 .flatten()
@@ -423,7 +570,11 @@ fn run(data: &Path, configs: &[ConfigEntry], params: &Params, resume: Option<Con
         if cancel.load(Ordering::Relaxed) {
             break;
         }
-        tx.send(Event::Report(Report { config: cfg.name.clone(), error: None, outcomes }));
+        tx.send(Event::Report(Report {
+            config: cfg.name.clone(),
+            error: None,
+            outcomes,
+        }));
     }
 
     zapret::stop();
@@ -439,7 +590,15 @@ fn run(data: &Path, configs: &[ConfigEntry], params: &Params, resume: Option<Con
 pub fn render_report(kind: Kind, reports: &[Report]) -> String {
     let mut out = String::new();
     for r in reports {
-        out.push_str(&format!("Config: {} (Type: {})\n", r.config, if kind == Kind::Standard { "standard" } else { "dpi" }));
+        out.push_str(&format!(
+            "Config: {} (Type: {})\n",
+            r.config,
+            if kind == Kind::Standard {
+                "standard"
+            } else {
+                "dpi"
+            }
+        ));
         if let Some(e) = &r.error {
             out.push_str(&format!("  FAILED TO START: {e}\n\n"));
             continue;
@@ -447,12 +606,26 @@ pub fn render_report(kind: Kind, reports: &[Report]) -> String {
         for o in &r.outcomes {
             match o {
                 Outcome::Std(s) => {
-                    let http: Vec<String> = s.checks.iter().map(|(l, c)| format!("{l}:{}", c.label())).collect();
-                    let ping = s.ping.map(|p| format!("{p} ms")).unwrap_or_else(|| "Timeout".into());
-                    out.push_str(&format!("  {} : {} | Ping: {ping}\n", s.name, http.join(" ")));
+                    let http: Vec<String> = s
+                        .checks
+                        .iter()
+                        .map(|(l, c)| format!("{l}:{}", c.label()))
+                        .collect();
+                    let ping = s
+                        .ping
+                        .map(|p| format!("{p} ms"))
+                        .unwrap_or_else(|| "Timeout".into());
+                    out.push_str(&format!(
+                        "  {} : {} | Ping: {ping}\n",
+                        s.name,
+                        http.join(" ")
+                    ));
                 }
                 Outcome::Dpi(d) => {
-                    out.push_str(&format!("  Target: [{}] {} ({})\n", d.country, d.id, d.provider));
+                    out.push_str(&format!(
+                        "  Target: [{}] {} ({})\n",
+                        d.country, d.id, d.provider
+                    ));
                     for l in &d.lines {
                         out.push_str(&format!(
                             "    {}: code={} up={:.1} KB down={:.1} KB time={:.2}s status={}\n",
@@ -492,7 +665,7 @@ pub fn render_report(kind: Kind, reports: &[Report]) -> String {
 }
 
 pub fn save_report(data: &Path, kind: Kind, reports: &[Report]) -> std::io::Result<PathBuf> {
-    let dir = data.join("utils").join("test results");
+    let dir = data.join("test results");
     fs::create_dir_all(&dir)?;
     let path = dir.join(format!("test_results_{}.txt", sys::timestamp()));
     fs::write(&path, render_report(kind, reports))?;
@@ -505,25 +678,61 @@ mod tests {
 
     #[test]
     fn network_primitives() {
-        println!("ping 1.1.1.1 = {:?}", net::ping("1.1.1.1"));
+        let cancel = Arc::new(AtomicBool::new(false));
+        println!(
+            "ping 1.1.1.1 = {:?}",
+            net::ping_cancellable("1.1.1.1", &cancel)
+        );
         for (label, tls) in STD_TESTS {
-            println!("{label} example.com = {:?}", http_check("https://example.com", tls, 5));
+            println!(
+                "{label} example.com = {:?}",
+                http_check("https://example.com", tls, 5, &cancel)
+            );
         }
-        println!("bad host = {:?}", http_check("https://nonexistent.invalid", Tls::Auto, 3));
+        println!(
+            "bad host = {:?}",
+            http_check("https://nonexistent.invalid", Tls::Auto, 3, &cancel)
+        );
         let r = net::perform(&Request::head("https://example.com", Tls::V13, 5));
         println!("head: code={:?} fail={:?} t={:.2}", r.code, r.fail, r.time);
         let payload = random_payload(65536);
-        let d = check_dpi(&DpiTarget { id: "x".into(), provider: "p".into(), country: "c".into(), host: "example.com".into() }, &payload, 5, 65536);
+        let d = check_dpi(
+            &DpiTarget {
+                id: "x".into(),
+                provider: "p".into(),
+                country: "c".into(),
+                host: "example.com".into(),
+            },
+            &payload,
+            5,
+            65536,
+            &cancel,
+        );
         for l in &d.lines {
-            println!("dpi {} code={} up={:.1} down={:.1} t={:.2} ok={}", l.label, l.code, l.up_kb, l.down_kb, l.time, l.status == DpiStatus::Ok);
+            println!(
+                "dpi {} code={} up={:.1} down={:.1} t={:.2} ok={}",
+                l.label,
+                l.code,
+                l.up_kb,
+                l.down_kb,
+                l.time,
+                l.status == DpiStatus::Ok
+            );
         }
-        let suite = fetch_dpi_suite(8);
+        let suite = fetch_dpi_suite(8, &cancel);
         println!("dpi suite: {}", suite.len());
         let data = zapret::find_data_dir("").unwrap();
         let t = load_targets(&data);
         println!("targets: {}", t.len());
         assert_eq!(t.len(), 16);
-        let std = check_standard(&t[0], 4);
+        let jobs = std_jobs(&t[..1]);
+        let done: Vec<_> = jobs
+            .iter()
+            .map(|j| Some(run_std_job(j, &t, 4, &cancel)))
+            .collect();
+        let Outcome::Std(std) = assemble_std(&t[..1], &jobs, done).remove(0) else {
+            unreachable!()
+        };
         println!("{} {:?} {:?}", std.name, std.checks, std.ping);
     }
 }

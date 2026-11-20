@@ -1,0 +1,356 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="_ds/celimos-design-system-555e0bf8-6c55-4aab-9d61-d477c913d931/tokens/fonts.css">
+  <link rel="stylesheet" href="_ds/celimos-design-system-555e0bf8-6c55-4aab-9d61-d477c913d931/tokens/colors.css">
+  <link rel="stylesheet" href="_ds/celimos-design-system-555e0bf8-6c55-4aab-9d61-d477c913d931/tokens/typography.css">
+  <link rel="stylesheet" href="_ds/celimos-design-system-555e0bf8-6c55-4aab-9d61-d477c913d931/tokens/spacing.css">
+  <link rel="stylesheet" href="_ds/celimos-design-system-555e0bf8-6c55-4aab-9d61-d477c913d931/tokens/elevation.css">
+  <link rel="stylesheet" href="_ds/celimos-design-system-555e0bf8-6c55-4aab-9d61-d477c913d931/tokens/base.css">
+  <link rel="stylesheet" href="_ds/celimos-design-system-555e0bf8-6c55-4aab-9d61-d477c913d931/styles.css">
+  <script src="_ds/celimos-design-system-555e0bf8-6c55-4aab-9d61-d477c913d931/_ds_bundle.js"></script>
+  <style>a{color:var(--accent)}a:hover{color:var(--accent-hover)}</style>
+</helmet>
+<div data-screen-label="{{ screenLabel }}" style="position:relative;width:{{ W }}px;height:{{ H }}px;display:flex;flex-direction:column;background:var(--bg-window);border:1px solid var(--line);border-radius:14px;overflow:hidden;font-family:var(--font-ui);color:var(--text-primary);box-shadow:var(--shadow-xl)">
+  <div style="position:absolute;left:0;right:0;top:0;height:420px;background:{{ wash }};pointer-events:none"></div>
+
+  <div style="position:relative;display:grid;grid-template-columns:1fr auto 1fr;align-items:center;height:44px;padding:0 16px;flex:none">
+    <div style="display:flex;gap:8px"><span style="width:12px;height:12px;border-radius:50%;background:#ff5f57"></span><span style="width:12px;height:12px;border-radius:50%;background:#febc2e"></span><span style="width:12px;height:12px;border-radius:50%;background:#28c840"></span></div>
+    <div style="font:800 15px/1 var(--font-display);letter-spacing:-0.01em;color:var(--text-primary)">Zapret</div>
+    <div></div>
+  </div>
+
+  <div style="position:relative;display:flex;flex:1;min-height:0">
+    <sc-if value="{{ isWide }}" hint-placeholder-val="{{ false }}">
+      <div style="width:208px;flex:none;display:flex;flex-direction:column;gap:4px;padding:12px;background:var(--bg-chrome);border-right:1px solid var(--line-soft)">
+        <sc-for list="{{ nav }}" as="n" hint-placeholder-count="3">
+          <div style="position:relative;display:flex;align-items:center;gap:12px;height:40px;padding:0 14px;border-radius:10px;background:{{ n.bg }};color:{{ n.color }};font:500 14px/1 var(--font-ui)">
+            <span style="position:absolute;left:0;top:10px;bottom:10px;width:3px;border-radius:2px;background:{{ n.bar }}"></span>
+            <sc-if value="{{ n.isTg }}" hint-placeholder-val="{{ false }}">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" style="flex:none"><path d="m22 2-7 20-4-9-9-4Z"></path><path d="M22 2 11 13"></path></svg>
+            </sc-if>
+            <sc-if value="{{ n.isIcon }}" hint-placeholder-val="{{ false }}">
+              <x-import component-from-global-scope="CelimosDesignSystem_555e0b.Icon" name="{{ n.icon }}" size="{{ 18 }}" hint-size="18px,18px"></x-import>
+            </sc-if>
+            {{ n.label }}
+          </div>
+        </sc-for>
+        <div style="flex:1"></div>
+        <div style="display:flex;align-items:center;gap:10px;padding:12px 14px;border-radius:12px;background:var(--surface-card);border:1px solid var(--line-soft)">
+          <span style="width:8px;height:8px;border-radius:50%;background:{{ tone }};box-shadow:{{ dotGlow }}"></span>
+          <div style="display:flex;flex-direction:column;gap:3px;min-width:0"><span style="font:600 13px/1 var(--font-ui)">{{ title }}</span><span style="font:400 12px/1.2 var(--font-mono);color:var(--text-tertiary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ cfgShort }}</span></div>
+        </div>
+      </div>
+    </sc-if>
+
+    <div style="flex:1;min-width:0;display:flex;flex-direction:column">
+      <sc-if value="{{ isNarrow }}" hint-placeholder-val="{{ true }}">
+        <div style="display:flex;justify-content:center;padding:4px 28px 12px;flex:none">
+          <x-import component-from-global-scope="CelimosDesignSystem_555e0b.SegmentedControl" options="{{ optsTab }}" value="{{ tabValue }}" hint-size="320px,40px"></x-import>
+        </div>
+      </sc-if>
+
+      <sc-if value="{{ isSub }}" hint-placeholder-val="{{ false }}">
+        <div style="display:flex;align-items:center;justify-content:space-between;padding:{{ subPad }};flex:none">
+          <div style="font:800 28px/1 var(--font-display);letter-spacing:-0.02em">Настройки</div>
+          <x-import component-from-global-scope="CelimosDesignSystem_555e0b.SegmentedControl" options="{{ optsSub }}" value="{{ subValue }}" size="sm" hint-size="180px,34px"></x-import>
+        </div>
+      </sc-if>
+
+      <sc-if value="{{ isHome }}" hint-placeholder-val="{{ true }}">
+        <div style="display:flex;flex-direction:{{ homeDir }};gap:{{ homeGap }}px;flex:1;min-height:0;padding:{{ pad }}">
+          <div style="display:flex;flex-direction:column;align-items:center;justify-content:{{ heroJust }};width:{{ heroW }};flex:none;text-align:center;zoom:{{ heroZoom }}">
+            <div style="position:relative;width:240px;height:240px;flex:none">
+              <sc-if value="{{ isRing }}" hint-placeholder-val="{{ true }}">
+                <div style="position:absolute;inset:0;border-radius:50%;background:{{ ringBg }};-webkit-mask:radial-gradient(farthest-side,transparent calc(100% - 5px),#000 calc(100% - 4px));mask:radial-gradient(farthest-side,transparent calc(100% - 5px),#000 calc(100% - 4px))"></div>
+                <div style="position:absolute;inset:16px;border-radius:50%;background:radial-gradient(circle at 50% 25%,#23232d,#131317 70%);border:1px solid var(--line);box-shadow:{{ ringShadow }};display:grid;place-items:center">
+                  <svg width="76" height="76" viewBox="0 0 24 24" fill="none" stroke="{{ tone }}" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M18.36 6.64a9 9 0 1 1-12.73 0"></path><path d="M12 2v10"></path></svg>
+                </div>
+              </sc-if>
+              <sc-if value="{{ isGlow }}" hint-placeholder-val="{{ false }}">
+                <sc-for list="{{ halos }}" as="h" hint-placeholder-count="2">
+                  <div style="position:absolute;left:{{ h.o }}px;top:{{ h.o }}px;width:{{ h.s }}px;height:{{ h.s }}px;border-radius:50%;background:{{ h.bg }}"></div>
+                </sc-for>
+                <div style="position:absolute;inset:26px;border-radius:50%;background:{{ glowRing }};-webkit-mask:radial-gradient(farthest-side,transparent calc(100% - 4px),#000 calc(100% - 3px));mask:radial-gradient(farthest-side,transparent calc(100% - 4px),#000 calc(100% - 3px))"></div>
+                <div style="position:absolute;inset:36px;border-radius:50%;background:{{ glowFill }};border:1px solid {{ glowBorder }};box-shadow:{{ glowShadow }};display:grid;place-items:center">
+                  <svg width="68" height="68" viewBox="0 0 24 24" fill="none" stroke="{{ glowIcon }}" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M18.36 6.64a9 9 0 1 1-12.73 0"></path><path d="M12 2v10"></path></svg>
+                </div>
+              </sc-if>
+              <sc-if value="{{ isOrbit }}" hint-placeholder-val="{{ false }}">
+                <div style="position:absolute;inset:6px;border-radius:50%;border:1px dashed {{ orbitLine }}"></div>
+                <div style="position:absolute;inset:34px;border-radius:50%;border:1px solid {{ orbitLine2 }}"></div>
+                <div style="position:absolute;inset:6px;border-radius:50%;background:{{ orbitArc }};-webkit-mask:radial-gradient(farthest-side,transparent calc(100% - 3px),#000 calc(100% - 2px));mask:radial-gradient(farthest-side,transparent calc(100% - 3px),#000 calc(100% - 2px))"></div>
+                <sc-for list="{{ dots }}" as="d" hint-placeholder-count="6">
+                  <span style="position:absolute;left:{{ d.x }}px;top:{{ d.y }}px;width:{{ d.s }}px;height:{{ d.s }}px;border-radius:50%;background:{{ d.bg }};box-shadow:{{ d.sh }}"></span>
+                </sc-for>
+                <div style="position:absolute;inset:56px;border-radius:50%;background:radial-gradient(circle at 50% 25%,#2a2a35,#16161c 75%);border:1px solid {{ orbitDiscBorder }};box-shadow:{{ orbitShadow }};display:grid;place-items:center">
+                  <svg width="56" height="56" viewBox="0 0 24 24" fill="none" stroke="{{ tone }}" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M18.36 6.64a9 9 0 1 1-12.73 0"></path><path d="M12 2v10"></path></svg>
+                </div>
+              </sc-if>
+            </div>
+            <div style="margin-top:14px;font:800 28px/1.1 var(--font-display);letter-spacing:-0.02em;color:{{ titleColor }}">{{ title }}</div>
+            <div style="margin-top:8px;max-width:360px;font:400 14px/1.45 var(--font-ui);color:var(--text-secondary);text-wrap:pretty">{{ sub }}</div>
+            <sc-if value="{{ isWorking }}" hint-placeholder-val="{{ false }}">
+              <div style="margin-top:16px;width:280px;height:4px;border-radius:2px;background:var(--ink-700);overflow:hidden"><div style="width:{{ progW }}%;height:100%;border-radius:2px;background:var(--accent);box-shadow:0 0 12px var(--teal-glow)"></div></div>
+              <div style="margin-top:10px;font:400 12px/1 var(--font-ui);color:var(--text-tertiary)">Нажмите на кнопку ещё раз, чтобы отменить</div>
+            </sc-if>
+            <sc-if value="{{ isError }}" hint-placeholder-val="{{ false }}">
+              <div style="margin-top:16px;max-width:400px;display:flex;gap:10px;align-items:flex-start;text-align:left;padding:11px 14px;border-radius:12px;background:rgba(251,191,36,0.10);border:1px solid rgba(251,191,36,0.24);color:var(--warning);font:500 13px/1.4 var(--font-ui)">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" style="flex:none;margin-top:1px"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"></path><path d="M12 9v4"></path><path d="M12 17h.01"></path></svg>
+                <span>Запущена служба zapret — удалите её, иначе проверка будет некорректной</span>
+              </div>
+            </sc-if>
+          </div>
+
+          <div style="flex:1;min-width:0;min-height:0;display:flex;flex-direction:column;background:var(--surface-card);border:1px solid var(--line-soft);border-radius:16px;box-shadow:var(--edge-top);overflow:hidden">
+            <div style="display:flex;align-items:center;gap:10px;padding:14px 16px 12px;flex:none">
+              <div style="font:700 18px/1 var(--font-display);letter-spacing:-0.01em">Конфигурации</div>
+              <x-import component-from-global-scope="CelimosDesignSystem_555e0b.Badge" tone="neutral" hint-size="30px,20px"><span style="font-family:var(--font-mono)">18</span></x-import>
+              <div style="flex:1"></div>
+              <x-import component-from-global-scope="CelimosDesignSystem_555e0b.Button" variant="primary" size="sm" icon-left="play" disabled="{{ testDisabled }}" hint-size="110px,32px">Тест всех</x-import>
+              <x-import component-from-global-scope="CelimosDesignSystem_555e0b.IconButton" name="more" size="sm" hint-size="32px,32px"></x-import>
+            </div>
+            <div style="height:1px;background:var(--line-soft);margin:0 16px;flex:none"></div>
+            <div style="position:relative;flex:1;min-height:0;overflow:hidden;padding:8px">
+              <sc-for list="{{ rows }}" as="r" hint-placeholder-count="6">
+                <div style="display:flex;align-items:center;gap:12px;height:46px;padding:0 8px 0 10px;border-radius:10px;background:{{ r.bg }}">
+                  <span style="width:16px;height:16px;border-radius:5px;border:1.5px solid var(--line-strong);flex:none"></span>
+                  <span style="font:{{ r.fw }} 14px/1 var(--font-ui);color:{{ r.color }};white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ r.name }}</span>
+                  <div style="flex:1"></div>
+                  <sc-if value="{{ r.spin }}" hint-placeholder-val="{{ false }}">
+                    <span style="width:14px;height:14px;border-radius:50%;border:2px solid rgba(255,255,255,0.12);border-top-color:var(--accent);margin-right:8px"></span>
+                  </sc-if>
+                  <sc-if value="{{ r.best }}" hint-placeholder-val="{{ false }}">
+                    <x-import component-from-global-scope="CelimosDesignSystem_555e0b.Badge" tone="accent" hint-size="90px,20px">★ лучшая</x-import>
+                  </sc-if>
+                  <sc-if value="{{ r.hasRes }}" hint-placeholder-val="{{ false }}">
+                    <x-import component-from-global-scope="CelimosDesignSystem_555e0b.Badge" tone="{{ r.tone }}" hint-size="150px,20px"><span style="font-family:var(--font-mono)">{{ r.res }}</span></x-import>
+                  </sc-if>
+                  <x-import component-from-global-scope="CelimosDesignSystem_555e0b.IconButton" name="play" size="sm" style="opacity:0.55" hint-size="32px,32px"></x-import>
+                </div>
+              </sc-for>
+              <div style="position:absolute;left:0;right:0;bottom:0;height:40px;background:linear-gradient(180deg,rgba(24,24,32,0),#181820);pointer-events:none"></div>
+            </div>
+          </div>
+        </div>
+      </sc-if>
+
+      <sc-if value="{{ isTg }}" hint-placeholder-val="{{ false }}">
+        <div style="flex:1;min-height:0;overflow:hidden;padding:{{ tgPad }};display:flex;flex-direction:column;gap:10px">
+          <div style="display:flex;flex-direction:column;gap:6px;flex:none">
+            <div style="font:800 28px/1 var(--font-display);letter-spacing:-0.02em">Telegram</div>
+            <div style="font:400 14px/1.45 var(--font-ui);color:var(--text-secondary);text-wrap:pretty">Подключение к прокси через ссылку tg:// — подтвердите её в окне Telegram.</div>
+          </div>
+          <div style="display:grid;grid-template-columns:{{ cols }};gap:16px;align-items:start">
+            <div style="background:var(--surface-card);border:1px solid var(--line-soft);border-radius:16px;box-shadow:var(--edge-top);padding:16px;display:flex;flex-direction:column;gap:14px">
+              <div style="display:flex;align-items:center;justify-content:space-between">
+                <div style="font:700 18px/1 var(--font-display)">Прокси</div>
+                <x-import component-from-global-scope="CelimosDesignSystem_555e0b.SegmentedControl" options="{{ optsTg }}" value="SOCKS5" size="sm" hint-size="170px,34px"></x-import>
+              </div>
+              <div style="display:grid;grid-template-columns:1fr 112px;gap:12px">
+                <div style="display:flex;flex-direction:column;gap:8px"><span style="font:600 11px/1 var(--font-ui);letter-spacing:0.14em;text-transform:uppercase;color:var(--text-tertiary)">Адрес</span><x-import component-from-global-scope="CelimosDesignSystem_555e0b.Input" value="127.0.0.1" size="sm" hint-size="100%,36px"></x-import></div>
+                <div style="display:flex;flex-direction:column;gap:8px"><span style="font:600 11px/1 var(--font-ui);letter-spacing:0.14em;text-transform:uppercase;color:var(--text-tertiary)">Порт</span><x-import component-from-global-scope="CelimosDesignSystem_555e0b.Input" value="1080" size="sm" hint-size="100%,36px"></x-import></div>
+              </div>
+              <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+                <div style="display:flex;flex-direction:column;gap:8px"><span style="font:600 11px/1 var(--font-ui);letter-spacing:0.14em;text-transform:uppercase;color:var(--text-tertiary)">Логин</span><x-import component-from-global-scope="CelimosDesignSystem_555e0b.Input" value="" placeholder="необязательно" size="sm" hint-size="100%,36px"></x-import></div>
+                <div style="display:flex;flex-direction:column;gap:8px"><span style="font:600 11px/1 var(--font-ui);letter-spacing:0.14em;text-transform:uppercase;color:var(--text-tertiary)">Пароль</span><x-import component-from-global-scope="CelimosDesignSystem_555e0b.Input" value="secret" type="password" size="sm" hint-size="100%,36px"></x-import></div>
+              </div>
+            </div>
+            <div style="display:flex;flex-direction:column;gap:16px">
+              <x-import component-from-global-scope="CelimosDesignSystem_555e0b.SettingsGroup" title="Автоподключение" hint-size="100%,150px">
+                <x-import component-from-global-scope="CelimosDesignSystem_555e0b.SettingsRow" title="При запуске zapret" description="Подключать Telegram к прокси" hint-size="100%,60px"><x-import component-from-global-scope="CelimosDesignSystem_555e0b.Switch" checked="{{ true }}" hint-size="44px,24px"></x-import></x-import>
+                <x-import component-from-global-scope="CelimosDesignSystem_555e0b.SettingsRow" title="При запуске программы" description="Если zapret не запускается автоматически" last="{{ true }}" hint-size="100%,60px"><x-import component-from-global-scope="CelimosDesignSystem_555e0b.Switch" checked="{{ false }}" hint-size="44px,24px"></x-import></x-import>
+              </x-import>
+              <div style="background:var(--surface-card);border:1px solid var(--line-soft);border-radius:16px;box-shadow:var(--edge-top);padding:16px;display:flex;flex-direction:column;gap:14px">
+                <div style="display:flex;gap:10px;flex-wrap:wrap">
+                  <x-import component-from-global-scope="CelimosDesignSystem_555e0b.Button" variant="secondary" size="sm" hint-size="140px,32px">Проверить прокси</x-import>
+                  <x-import component-from-global-scope="CelimosDesignSystem_555e0b.Button" variant="primary" size="sm" hint-size="220px,32px">Подключить Telegram сейчас</x-import>
+                </div>
+                <div style="display:flex;align-items:center;gap:8px;font:500 13px/1 var(--font-ui);color:var(--success)">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"></circle><path d="m8.5 12 2.5 2.5 4.5-5"></path></svg>Прокси отвечает (<span style="font-family:var(--font-mono)">42 мс</span>)
+                </div>
+                <div style="display:flex;flex-direction:column;gap:8px">
+                                    <div style="display:flex;align-items:center;gap:10px;height:40px;padding:0 6px 0 14px;border-radius:999px;background:var(--ink-1000);border:1px solid var(--line)">
+                    <span style="flex:1;min-width:0;font:400 12px/1 var(--font-mono);color:var(--text-secondary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">tg://socks?server=127.0.0.1&amp;port=1080</span>
+                    <x-import component-from-global-scope="CelimosDesignSystem_555e0b.Button" variant="ghost" size="sm" hint-size="100px,30px">Копировать</x-import>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </sc-if>
+
+      <sc-if value="{{ isSettings }}" hint-placeholder-val="{{ false }}">
+        <div style="flex:1;min-height:0;overflow:hidden;padding:{{ pad }};display:grid;grid-template-columns:{{ cols }};gap:16px;align-content:start;align-items:start">
+          <div style="background:var(--surface-card);border:1px solid var(--line-soft);border-radius:16px;box-shadow:var(--edge-top);padding:16px;display:flex;flex-direction:column;gap:14px">
+            <div style="font:700 18px/1 var(--font-display)">Общие</div>
+            <div style="display:flex;flex-direction:column;gap:8px">
+              <span style="font:600 11px/1 var(--font-ui);letter-spacing:0.14em;text-transform:uppercase;color:var(--text-tertiary)">Папка data (с general*.bat, lists, bin)</span>
+              <div style="display:flex;gap:10px;align-items:center">
+                <x-import component-from-global-scope="CelimosDesignSystem_555e0b.Input" value="" placeholder="автоопределение" icon="server" size="sm" hint-size="100%,36px"></x-import>
+                <x-import component-from-global-scope="CelimosDesignSystem_555e0b.Button" variant="secondary" size="sm" hint-size="110px,32px">Применить</x-import>
+              </div>
+              <div style="display:flex;align-items:center;gap:8px;font:400 12px/1 var(--font-mono);color:var(--success)">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m20 6-11 11-5-5"></path></svg>Найдена: /Users/you/zapret/data
+              </div>
+            </div>
+            <div>
+              <x-import component-from-global-scope="CelimosDesignSystem_555e0b.SettingsRow" title="Запускать последнюю конфигурацию" description="При старте программы" hint-size="100%,60px"><x-import component-from-global-scope="CelimosDesignSystem_555e0b.Switch" checked="{{ true }}" hint-size="44px,24px"></x-import></x-import>
+              <x-import component-from-global-scope="CelimosDesignSystem_555e0b.SettingsRow" title="Права администратора" description="Без них движок не запустится" last="{{ true }}" hint-size="100%,60px"><x-import component-from-global-scope="CelimosDesignSystem_555e0b.Badge" tone="success" hint-size="50px,20px">есть</x-import></x-import>
+            </div>
+          </div>
+          <div style="background:var(--surface-card);border:1px solid var(--line-soft);border-radius:16px;box-shadow:var(--edge-top);padding:16px;display:flex;flex-direction:column">
+            <div style="font:700 18px/1 var(--font-display);margin-bottom:6px">Тестирование конфигураций</div>
+            <sc-for list="{{ sliders }}" as="s" hint-placeholder-count="3">
+              <div style="display:flex;align-items:center;gap:16px;padding:14px 0;border-bottom:1px solid var(--line-soft)">
+                <span style="flex:1;font:500 14px/1.2 var(--font-ui)">{{ s.label }}</span>
+                <div style="width:{{ s.w }}px;flex:none"><x-import component-from-global-scope="CelimosDesignSystem_555e0b.Slider" value="{{ s.v }}" max="{{ s.max }}" size="sm" show-thumb="always" hint-size="100%,16px"></x-import></div>
+                <span style="width:44px;text-align:right;font:500 13px/1 var(--font-mono);color:var(--text-primary)">{{ s.v }}</span>
+              </div>
+            </sc-for>
+            <div style="display:flex;align-items:center;gap:16px;padding:12px 0 2px">
+              <span style="flex:1;font:500 14px/1.2 var(--font-ui)">Объём DPI-запроса, байт</span>
+              <x-import component-from-global-scope="CelimosDesignSystem_555e0b.NumberStepper" value="{{ 65536 }}" min="{{ 1024 }}" max="{{ 1048576 }}" step="{{ 1024 }}" width="{{ 150 }}" hint-size="150px,34px"></x-import>
+            </div>
+          </div>
+        </div>
+      </sc-if>
+
+      <sc-if value="{{ isSites }}" hint-placeholder-val="{{ false }}">
+        <div style="flex:1;min-height:0;overflow:hidden;padding:{{ pad }};display:grid;grid-template-columns:{{ cols }};gap:16px;align-content:start;align-items:start">
+          <div style="background:var(--surface-card);border:1px solid var(--line-soft);border-radius:16px;box-shadow:var(--edge-top);padding:16px;display:flex;flex-direction:column;gap:14px">
+            <div style="display:flex;align-items:center;justify-content:space-between;gap:12px">
+              <div style="font:700 18px/1 var(--font-display)">Свои списки сайтов</div>
+              <x-import component-from-global-scope="CelimosDesignSystem_555e0b.SegmentedControl" options="{{ optsList }}" value="Обходить" size="sm" hint-size="190px,34px"></x-import>
+            </div>
+            <div style="font:400 12px/1.4 var(--font-mono);color:var(--text-tertiary)">list-general-user.txt — сайты, трафик которых обрабатывает zapret</div>
+            <div style="display:flex;flex-wrap:wrap;gap:8px">
+              <sc-for list="{{ domains }}" as="d" hint-placeholder-count="3">
+                <span style="display:inline-flex;align-items:center;gap:8px;height:32px;padding:0 8px 0 14px;border-radius:999px;background:var(--ink-700);font:500 13px/1 var(--font-ui)">{{ d }}<span style="display:grid;place-items:center;width:18px;height:18px;border-radius:50%;background:rgba(255,255,255,0.08);color:var(--text-secondary)"><x-import component-from-global-scope="CelimosDesignSystem_555e0b.Icon" name="x" size="{{ 11 }}" stroke-width="{{ 2.4 }}" hint-size="11px,11px"></x-import></span></span>
+              </sc-for>
+            </div>
+            <div style="display:flex;align-items:center;gap:10px;padding:10px 14px;border-radius:12px;background:rgba(251,191,36,0.10);border:1px solid rgba(251,191,36,0.24);color:var(--warning);font:500 13px/1.3 var(--font-ui)">
+              <span style="flex:1">Список изменён — перезапустите zapret.</span>
+              <x-import component-from-global-scope="CelimosDesignSystem_555e0b.Button" variant="secondary" size="sm" hint-size="130px,30px">Перезапустить</x-import>
+            </div>
+          </div>
+          <div style="background:var(--surface-card);border:1px solid var(--line-soft);border-radius:16px;box-shadow:var(--edge-top);padding:16px;display:flex;flex-direction:column;gap:12px">
+            <div style="font:700 18px/1 var(--font-display)">Проверка доступности</div>
+            <div style="height:{{ taH }}px;padding:10px 14px;border-radius:12px;background:var(--ink-1000);border:1px solid var(--line);font:400 13px/1.5 var(--font-mono);color:var(--text-secondary);overflow:hidden">youtube.com<br>discord.com, instagram.com</div>
+            <div style="display:flex;align-items:center;gap:14px">
+              <x-import component-from-global-scope="CelimosDesignSystem_555e0b.Button" variant="primary" size="sm" icon-left="play" hint-size="120px,32px">Проверить</x-import>
+              <x-import component-from-global-scope="CelimosDesignSystem_555e0b.Switch" checked="{{ true }}" size="sm" hint-size="36px,20px"></x-import>
+              <span style="font:400 13px/1.2 var(--font-ui);color:var(--text-secondary)">Без zapret (временно остановить)</span>
+            </div>
+            <div style="display:flex;align-items:center;gap:14px">
+              <span style="font:400 13px/1 var(--font-ui);color:var(--text-secondary)">Потоков</span>
+              <div style="flex:1"><x-import component-from-global-scope="CelimosDesignSystem_555e0b.Slider" value="{{ 16 }}" max="{{ 64 }}" size="sm" show-thumb="always" hint-size="100%,16px"></x-import></div>
+              <span style="width:28px;text-align:right;font:500 13px/1 var(--font-mono)">16</span>
+            </div>
+            <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
+              <x-import component-from-global-scope="CelimosDesignSystem_555e0b.Button" variant="ghost" size="sm" hint-size="110px,30px">Недоступные</x-import>
+              <x-import component-from-global-scope="CelimosDesignSystem_555e0b.Button" variant="ghost" size="sm" hint-size="50px,30px">Все</x-import>
+              <x-import component-from-global-scope="CelimosDesignSystem_555e0b.Button" variant="ghost" size="sm" hint-size="70px,30px">Снять</x-import>
+              <div style="flex:1"></div>
+              <x-import component-from-global-scope="CelimosDesignSystem_555e0b.Button" variant="secondary" size="sm" icon-left="plus" hint-size="200px,30px">Добавить выбранные (2)</x-import>
+            </div>
+            <div style="display:flex;flex-direction:column">
+              <sc-for list="{{ results }}" as="q" hint-placeholder-count="4">
+                <div style="display:flex;align-items:center;gap:12px;height:40px;border-top:1px solid var(--line-soft)">
+                  <span style="width:16px;height:16px;border-radius:5px;flex:none;border:1.5px solid {{ q.boxBorder }};background:{{ q.boxBg }}"></span>
+                  <span style="flex:1;font:500 14px/1 var(--font-ui)">{{ q.domain }}</span>
+                  <span style="font:500 13px/1 var(--font-ui);color:{{ q.color }}">{{ q.label }}</span>
+                  <span style="width:132px;text-align:right;font:400 12px/1 var(--font-mono);color:var(--text-tertiary)">{{ q.meta }}</span>
+                </div>
+              </sc-for>
+            </div>
+          </div>
+        </div>
+      </sc-if>
+    </div>
+  </div>
+
+  <div style="position:relative;display:flex;align-items:center;gap:10px;height:38px;padding:0 20px;flex:none;background:var(--ink-1000);border-top:1px solid var(--line-soft)">
+    <x-import component-from-global-scope="CelimosDesignSystem_555e0b.Icon" name="chevronRight" size="{{ 14 }}" style="color:var(--text-tertiary)" hint-size="14px,14px"></x-import>
+    <span style="font:500 12px/1 var(--font-ui);color:var(--text-secondary)">Журнал</span>
+    <span style="flex:1;min-width:0;font:400 12px/1 var(--font-mono);color:{{ logColor }};white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ logLine }}</span>
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script>
+class Component extends DCLogic {
+  renderVals() {
+    const p = this.props;
+    const screen = p.screen || 'home', state = p.state || 'on', hero = p.hero || 'ring', wide = p.layout === 'wide';
+    const A = '0,217,192', R = '255,90,90';
+    const lit = state !== 'off', err = state === 'error';
+    const g = err ? R : A;
+    const tone = { off: 'rgba(244,245,247,0.52)', working: '#00d9c0', on: '#00d9c0', error: '#ff5a5a' }[state];
+    const T = {
+      off: ['Отключено', 'Нажмите на кнопку — программа сама подберёт рабочую конфигурацию', 'Zapret остановлен'],
+      working: ['Подбор конфигурации…', 'Проверяем «general (ALT3)» — 4/18', 'Тест: general (ALT3) — цели 7/22'],
+      on: ['Подключено', 'Конфигурация: general (ALT3)', 'Запущена конфигурация general (ALT3)'],
+      error: ['Не удалось подключиться', 'Ни одна конфигурация не прошла тест — подключение невозможно', 'ОШИБКА: ни одна конфигурация не прошла тест — подключение невозможно'],
+    }[state];
+    const titleColor = { off: 'var(--text-primary)', working: 'var(--accent)', on: 'var(--accent)', error: 'var(--danger)' }[state];
+    // rows
+    const defs = [['general (ALT3)', '14 OK · 0 ERR · ping 3/3', 'success'], ['general', '12 OK · 2 ERR · ping 3/3', 'warning'], ['general (ALT)', '9 OK · 5 ERR · ping 3/3', 'warning'], ['general (ALT2)', '4 OK · 10 ERR · ping 2/3', 'danger'], ['general (FAKE TLS)', 'ошибка', 'danger'], ['general (SIMPLE FAKE)', '1 OK · 13 ERR · ping 0/3', 'danger']];
+    let rows;
+    if (state === 'off') rows = ['general', 'general (ALT)', 'general (ALT2)', 'general (ALT3)', 'general (FAKE TLS)', 'general (SIMPLE FAKE)'].map(n => ({ name: n }));
+    else if (state === 'working') rows = [['general', '12 OK · 2 ERR · ping 3/3', 'warning'], ['general (ALT)', '9 OK · 5 ERR · ping 3/3', 'warning'], ['general (ALT2)', '4 OK · 10 ERR · ping 2/3', 'danger'], ['general (ALT3)', '', '', 1], ['general (FAKE TLS)'], ['general (SIMPLE FAKE)']].map(d => ({ name: d[0], res: d[1], tone: d[2], spin: !!d[3] }));
+    else if (state === 'on') rows = defs.map((d, i) => ({ name: d[0], res: d[1], tone: d[2], active: i === 0, best: i === 0 }));
+    else rows = defs.map((d, i) => ({ name: d[0], res: i < 2 ? 'ошибка' : '0 OK · 14 ERR · ping 0/3', tone: 'danger' }));
+    rows = rows.map(r => ({ name: r.name, hasRes: !!r.res, res: r.res || '', tone: r.tone || 'neutral', spin: !!r.spin, best: !!r.best, bg: r.active ? 'var(--teal-tint)' : 'transparent', color: r.active ? 'var(--accent)' : 'var(--text-primary)', fw: r.active ? 600 : 500 }));
+    // hero pieces
+    const arc = `conic-gradient(${'#00d9c0'} 0 33%, rgba(255,255,255,0.10) 0)`;
+    const ringBg = { off: 'rgba(255,255,255,0.10)', on: '#00d9c0', error: '#ff5a5a', working: arc }[state];
+    const ringShadow = lit ? `0 0 80px rgba(${g},0.28), inset 0 1px 0 rgba(255,255,255,0.08)` : '0 16px 40px rgba(0,0,0,0.5), inset 0 1px 0 rgba(255,255,255,0.06)';
+    const halos = lit ? [{ s: 240, o: 0, bg: `rgba(${g},0.06)` }, { s: 204, o: 18, bg: `rgba(${g},0.10)` }] : [];
+    const glowRing = { off: 'transparent', on: 'transparent', error: '#ff5a5a', working: arc }[state];
+    const glowFill = state === 'on' ? 'linear-gradient(180deg,#2ee9d2,#00b8a3)' : 'radial-gradient(circle at 50% 25%,#23232d,#131317 70%)';
+    const glowBorder = state === 'on' ? 'rgba(255,255,255,0.25)' : err ? 'rgba(255,90,90,0.4)' : 'rgba(255,255,255,0.10)';
+    const glowShadow = state === 'on' ? '0 18px 48px rgba(0,217,192,0.40), inset 0 1px 0 rgba(255,255,255,0.35)' : '0 14px 36px rgba(0,0,0,0.5), inset 0 1px 0 rgba(255,255,255,0.06)';
+    const glowIcon = state === 'on' ? '#04201c' : tone;
+    const dotDefs = [[120, 114, -90, 8], [120, 114, -20, 6], [120, 114, 70, 7], [120, 114, 150, 6], [120, 86, 30, 5], [120, 86, 200, 5]];
+    const litN = { off: 0, working: 3, on: 6, error: 2 }[state];
+    const dots = dotDefs.map((d, i) => {
+      const a = d[2] * Math.PI / 180, on = i < litN;
+      return { x: Math.round(d[0] + d[1] * Math.cos(a) - d[3] / 2), y: Math.round(d[0] + d[1] * Math.sin(a) - d[3] / 2), s: d[3], bg: on ? (err ? '#ff5a5a' : '#00d9c0') : 'var(--ink-500)', sh: on ? `0 0 10px rgba(${g},0.8)` : 'none' };
+    });
+    const sliders = [{ label: 'Параллельно', v: 12, max: 32 }, { label: 'Таймаут, с', v: 4, max: 15 }, { label: 'Таймаут проверки сайтов, с', v: 6, max: 20 }].map(s => ({ ...s, w: wide ? 200 : 170 }));
+    const navDefs = [['Главная', 'home', 'home'], ['Telegram', 'tg'], ['Настройки', 'settings', 'settings']];
+    const active = screen === 'home' ? 'Главная' : screen === 'telegram' ? 'Telegram' : 'Настройки';
+    const nav = navDefs.map(n => ({ label: n[0], isTg: n[1] === 'tg', isIcon: n[1] !== 'tg', icon: n[1], bg: n[0] === active ? 'var(--teal-tint)' : 'transparent', color: n[0] === active ? 'var(--accent)' : 'var(--text-secondary)', bar: n[0] === active ? 'var(--accent)' : 'transparent' }));
+    const res = [['youtube.com', 1, '148 мс · HTTP 200'], ['discord.com', 0, '6000 мс · timeout'], ['instagram.com', 0, '312 мс · SSL'], ['example.org', 1, '96 мс · HTTP 200']].map(r => ({ domain: r[0], color: r[1] ? 'var(--success)' : 'var(--danger)', label: r[1] ? 'доступен' : 'недоступен', meta: r[2], boxBg: r[1] ? 'transparent' : 'var(--accent)', boxBorder: r[1] ? 'var(--line-strong)' : 'var(--accent)' }));
+    const labels = { home: 'Главная', telegram: 'Telegram', settings: 'Настройки · общие', sites: 'Настройки · сайты' };
+    return {
+      W: wide ? 960 : 560, H: wide ? 680 : 820, screenLabel: labels[screen] + ' · ' + state,
+      isWide: wide, isNarrow: !wide, isHome: screen === 'home', isTg: screen === 'telegram', isSettings: screen === 'settings', isSites: screen === 'sites',
+      isSub: screen === 'settings' || screen === 'sites',
+      isRing: hero === 'ring', isGlow: hero === 'glow', isOrbit: hero === 'orbit', isWorking: state === 'working', isError: err,
+      wash: lit ? `radial-gradient(ellipse 70% 100% at ${wide ? '32%' : '50%'} 0%, rgba(${g},0.14), transparent 70%)` : 'none',
+      tone, title: T[0], sub: T[1], logLine: T[2], logColor: err ? 'var(--danger)' : 'var(--text-tertiary)', titleColor,
+      dotGlow: lit ? `0 0 10px rgba(${g},0.9)` : 'none', cfgShort: state === 'on' ? 'general (ALT3)' : state === 'working' ? 'подбор…' : '—',
+      nav, optsTab: ['Главная', 'Telegram', 'Настройки'], tabValue: active, optsSub: ['Общие', 'Сайты'], subValue: screen === 'sites' ? 'Сайты' : 'Общие',
+      optsTg: ['SOCKS5', 'MTProto'], optsList: ['Обходить', 'Исключения'], subPad: wide ? '8px 32px 18px' : '4px 28px 16px',
+      pad: wide ? '8px 32px 24px' : '4px 28px 18px', cols: wide ? '1fr 1fr' : '1fr',
+      homeDir: wide ? 'row' : 'column', homeGap: wide ? 28 : 16, heroW: wide ? '320px' : '100%', heroJust: wide ? 'center' : 'flex-start',
+      progW: 33, tgPad: wide ? '8px 32px 24px' : '0 28px 4px', heroZoom: wide ? 1 : 0.86, taH: wide ? 68 : 56, testDisabled: state === 'working', rows, ringBg, ringShadow, halos, glowRing, glowFill, glowBorder, glowShadow, glowIcon,
+      orbitLine: lit ? `rgba(${g},0.35)` : 'rgba(255,255,255,0.14)', orbitLine2: lit ? `rgba(${g},0.18)` : 'rgba(255,255,255,0.07)',
+      orbitArc: state === 'working' ? 'conic-gradient(#00d9c0 0 33%, transparent 0)' : state === 'on' ? '#00d9c0' : err ? '#ff5a5a' : 'transparent',
+      orbitDiscBorder: lit ? `rgba(${g},0.4)` : 'rgba(255,255,255,0.10)', orbitShadow: lit ? `0 0 56px rgba(${g},0.30), inset 0 1px 0 rgba(255,255,255,0.08)` : '0 12px 30px rgba(0,0,0,0.5), inset 0 1px 0 rgba(255,255,255,0.06)',
+      dots, sliders, domains: ['youtube.com', 'discord.com', 'x.com'], results: wide ? res : res.slice(0, 3),
+    };
+  }
+}
+</script>
+</body>
+</html>

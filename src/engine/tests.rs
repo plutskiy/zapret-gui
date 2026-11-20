@@ -23,16 +23,32 @@ fn data_dir() -> PathBuf {
 
 fn config_args(name: &str) -> Vec<String> {
     let data = data_dir();
-    let spec = crate::zapret::build_launch(&data, &data.join(format!("{name}.bat"))).unwrap();
+    let spec =
+        crate::zapret::build_launch(&data, &data.join("configs").join(format!("{name}.conf")))
+            .unwrap();
     crate::zapret::tokenize(&spec.windows_args)
 }
 
 const CLIENT: Ipv4Addr = Ipv4Addr::new(192, 168, 1, 10);
 
-fn tcp_pkt(server: Ipv4Addr, sport: u16, dport: u16, flags: u16, seq: u32, ack: u32, data: &[u8]) -> Vec<u8> {
+fn tcp_pkt(
+    server: Ipv4Addr,
+    sport: u16,
+    dport: u16,
+    flags: u16,
+    seq: u32,
+    ack: u32,
+    data: &[u8],
+) -> Vec<u8> {
     prepare_tcp_segment(
-        &Endpoint { ip: IpAddr::V4(CLIENT), port: sport },
-        &Endpoint { ip: IpAddr::V4(server), port: dport },
+        &Endpoint {
+            ip: IpAddr::V4(CLIENT),
+            port: sport,
+        },
+        &Endpoint {
+            ip: IpAddr::V4(server),
+            port: dport,
+        },
         &TcpBuild {
             flags,
             sack: true,
@@ -60,9 +76,25 @@ fn tcp_pkt(server: Ipv4Addr, sport: u16, dport: u16, flags: u16, seq: u32, ack: 
 
 fn udp_pkt(server: Ipv4Addr, sport: u16, dport: u16, data: &[u8]) -> Vec<u8> {
     prepare_udp_segment(
-        &Endpoint { ip: IpAddr::V4(CLIENT), port: sport },
-        &Endpoint { ip: IpAddr::V4(server), port: dport },
-        &UdpBuild { df: false, ttl: 128, tos: 0, ip_id: 2000, flow: 0, fooling: 0, padding: None, padlen: 0, data },
+        &Endpoint {
+            ip: IpAddr::V4(CLIENT),
+            port: sport,
+        },
+        &Endpoint {
+            ip: IpAddr::V4(server),
+            port: dport,
+        },
+        &UdpBuild {
+            df: false,
+            ttl: 128,
+            tos: 0,
+            ip_id: 2000,
+            flow: 0,
+            fooling: 0,
+            padding: None,
+            padlen: 0,
+            data,
+        },
         9400,
     )
     .unwrap()
@@ -95,16 +127,22 @@ fn run_tls(cfg: &str, server: Ipv4Addr, hello: &[u8]) -> (Outcome, u32) {
     if verdict & VERDICT_MASK != VERDICT_DROP {
         io.sent.push(data);
     }
-    (Outcome { verdict, sent: io.sent }, isn + 1)
+    (
+        Outcome {
+            verdict,
+            sent: io.sent,
+        },
+        isn + 1,
+    )
 }
 
 fn all_configs() -> Vec<String> {
-    let mut v: Vec<String> = std::fs::read_dir(data_dir())
+    let mut v: Vec<String> = std::fs::read_dir(data_dir().join("configs"))
         .unwrap()
         .flatten()
         .filter_map(|e| {
             let n = e.file_name().to_string_lossy().to_string();
-            (n.starts_with("general") && n.ends_with(".bat")).then(|| n[..n.len() - 4].to_string())
+            (n.starts_with("general") && n.ends_with(".conf")).then(|| n[..n.len() - 5].to_string())
         })
         .collect();
     v.sort();
@@ -134,12 +172,20 @@ fn windivert_filter_shape() {
     println!("{f}");
     assert!(f.starts_with("!impostor and !loopback and"));
     assert!(f.contains("tcp.DstPort == 443"));
-    assert!(f.contains("udp.DstPort >= 19294 and udp.DstPort <= 19344") || f.contains("(udp.DstPort >= 19294 and udp.DstPort <= 19344)"));
+    assert!(
+        f.contains("udp.DstPort >= 19294 and udp.DstPort <= 19344")
+            || f.contains("(udp.DstPort >= 19294 and udp.DstPort <= 19344)")
+    );
 }
 
 #[test]
 fn tls_hello_every_config_keeps_data_and_checksums() {
-    let hello = std::fs::read(data_dir().join("bin").join("tls_clienthello_www_google_com.bin")).unwrap();
+    let hello = std::fs::read(
+        data_dir()
+            .join("bin")
+            .join("tls_clienthello_www_google_com.bin"),
+    )
+    .unwrap();
     assert!(crate::engine::proto::is_tls_client_hello(&hello, false));
     let server = Ipv4Addr::new(142, 250, 74, 46);
     for cfg in all_configs() {
@@ -171,14 +217,25 @@ fn tls_hello_every_config_keeps_data_and_checksums() {
             }
         }
         let missing = covered.iter().filter(|c| !**c).count();
-        println!("{cfg}: verdict={} sent={} fakes_or_seqovl={} uncovered={}", out.verdict, out.sent.len(), fakes, missing);
+        println!(
+            "{cfg}: verdict={} sent={} fakes_or_seqovl={} uncovered={}",
+            out.verdict,
+            out.sent.len(),
+            fakes,
+            missing
+        );
         assert_eq!(missing, 0, "{cfg}: original data not fully delivered");
     }
 }
 
 #[test]
 fn quic_initial_gets_fake_and_original() {
-    let quic = std::fs::read(data_dir().join("bin").join("quic_initial_www_google_com.bin")).unwrap();
+    let quic = std::fs::read(
+        data_dir()
+            .join("bin")
+            .join("quic_initial_www_google_com.bin"),
+    )
+    .unwrap();
     let server = Ipv4Addr::new(142, 250, 74, 46);
     for cfg in ["general", "general (ALT)", "general (SIMPLE FAKE)"] {
         let params = args::parse(&config_args(cfg)).unwrap();
@@ -192,7 +249,11 @@ fn quic_initial_gets_fake_and_original() {
             let p = Pkt::dissect(s.clone()).unwrap();
             assert!(p.udp && checksum_ok(&p));
         }
-        let orig_sent = io.sent.iter().any(|s| Pkt::dissect(s.clone()).unwrap().payload() == &quic[..]) || v & VERDICT_MASK != VERDICT_DROP;
+        let orig_sent = io
+            .sent
+            .iter()
+            .any(|s| Pkt::dissect(s.clone()).unwrap().payload() == &quic[..])
+            || v & VERDICT_MASK != VERDICT_DROP;
         assert!(orig_sent, "{cfg}: original quic initial lost");
     }
 }
@@ -207,7 +268,11 @@ fn unlisted_host_is_untouched() {
 }
 
 fn hello_for(sni: &str) -> Vec<u8> {
-    let a = vec!["--dpi-desync=fake".to_string(), "--dpi-desync-fake-tls=!".to_string(), format!("--dpi-desync-fake-tls-mod=sni={sni}")];
+    let a = vec![
+        "--dpi-desync=fake".to_string(),
+        "--dpi-desync-fake-tls=!".to_string(),
+        format!("--dpi-desync-fake-tls-mod=sni={sni}"),
+    ];
     let p = args::parse(&a).unwrap();
     p.profiles[0].fake_tls[0].data.clone()
 }
@@ -217,7 +282,10 @@ fn listed_hosts_are_desynced_in_every_config() {
     let server = Ipv4Addr::new(142, 250, 74, 46);
     for sni in ["youtube.com", "discord.com", "www.youtube.com"] {
         let hello = hello_for(sni);
-        assert_eq!(crate::engine::proto::tls_hello_extract_host(&hello, false).as_deref(), Some(sni));
+        assert_eq!(
+            crate::engine::proto::tls_hello_extract_host(&hello, false).as_deref(),
+            Some(sni)
+        );
         for cfg in all_configs() {
             let (out, isn) = run_tls(&cfg, server, &hello);
             let mut covered = vec![false; hello.len()];
@@ -225,15 +293,29 @@ fn listed_hosts_are_desynced_in_every_config() {
             for raw in &out.sent {
                 let p = Pkt::dissect(raw.clone()).unwrap_or_else(|| panic!("{cfg}: bad packet"));
                 assert!(p.tcp, "{cfg}");
-                assert_eq!(ip4_header_checksum(&p.buf[..p.l3_len]), 0, "{cfg}: bad ip checksum");
+                assert_eq!(
+                    ip4_header_checksum(&p.buf[..p.l3_len]),
+                    0,
+                    "{cfg}: bad ip checksum"
+                );
                 assert_eq!(p.win(), 64240, "{cfg}: tcp window lost");
-                assert!(p.ack() == 5000 || p.ack() == 5000u32.wrapping_sub(66000) || p.tcp_flags() & TH_ACK == 0, "{cfg}: bad ack {}", p.ack());
+                assert!(
+                    p.ack() == 5000
+                        || p.ack() == 5000u32.wrapping_sub(66000)
+                        || p.tcp_flags() & TH_ACK == 0,
+                    "{cfg}: bad ack {}",
+                    p.ack()
+                );
                 let badsum = !checksum_ok(&p);
                 let pl = p.payload();
                 let rel0 = p.seq().wrapping_sub(isn) as i32 as i64;
                 let skip = if rel0 < 0 { (-rel0) as usize } else { 0 };
                 let rel = rel0 + skip as i64;
-                let pl = if skip <= pl.len() { &pl[skip..] } else { &pl[..0] };
+                let pl = if skip <= pl.len() {
+                    &pl[skip..]
+                } else {
+                    &pl[..0]
+                };
                 let is_real = !badsum
                     && p.ttl() == 128
                     && !pl.is_empty()
@@ -251,9 +333,20 @@ fn listed_hosts_are_desynced_in_every_config() {
                 }
             }
             let missing = covered.iter().filter(|c| !**c).count();
-            println!("{sni} {cfg}: verdict={} packets={} real={} fake/ovl={} uncovered={}", out.verdict, out.sent.len(), real, fakes, missing);
+            println!(
+                "{sni} {cfg}: verdict={} packets={} real={} fake/ovl={} uncovered={}",
+                out.verdict,
+                out.sent.len(),
+                real,
+                fakes,
+                missing
+            );
             assert_eq!(missing, 0, "{cfg}/{sni}: original data not fully delivered");
-            assert!(out.sent.len() >= 2, "{cfg}/{sni}: expected desync (>=2 packets), got {}", out.sent.len());
+            assert!(
+                out.sent.len() >= 2,
+                "{cfg}/{sni}: expected desync (>=2 packets), got {}",
+                out.sent.len()
+            );
         }
     }
 }

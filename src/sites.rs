@@ -1,12 +1,12 @@
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 use std::sync::mpsc::{Receiver, Sender};
-use std::sync::Arc;
 
-use crate::zapret::{self, ConfigEntry};
 use crate::net::{self, Request, Tls};
 use crate::parallel;
+use crate::zapret::{self, ConfigEntry};
 
 const PLACEHOLDER: &str = "domain.example.abc";
 
@@ -34,10 +34,16 @@ pub fn normalize(input: &str) -> Option<String> {
     let s = s.split("://").last().unwrap_or("");
     let s = s.split(['/', '?', '#']).next().unwrap_or("");
     let s = s.rsplit('@').next().unwrap_or("");
-    let s = s.split(':').next().unwrap_or("").trim_start_matches("*.").trim_matches('.');
+    let s = s
+        .split(':')
+        .next()
+        .unwrap_or("")
+        .trim_start_matches("*.")
+        .trim_matches('.');
     let valid = !s.is_empty()
         && s.contains('.')
-        && s.chars().all(|c| c.is_alphanumeric() || c == '.' || c == '-' || c == '_');
+        && s.chars()
+            .all(|c| c.is_alphanumeric() || c == '.' || c == '-' || c == '_');
     valid.then(|| s.to_string())
 }
 
@@ -92,7 +98,10 @@ pub fn add_domains(data: &Path, kind: ListKind, new: &[String]) -> std::io::Resu
 }
 
 pub fn remove_domain(data: &Path, kind: ListKind, domain: &str) -> std::io::Result<()> {
-    let list: Vec<String> = read_list(data, kind).into_iter().filter(|d| d != domain).collect();
+    let list: Vec<String> = read_list(data, kind)
+        .into_iter()
+        .filter(|d| d != domain)
+        .collect();
     write_list(data, kind, &list)
 }
 
@@ -121,7 +130,12 @@ fn check(domain: &str, timeout: u64) -> SiteResult {
         (None, code) => (true, format!("HTTP {}", code.unwrap_or(0))),
         (Some(f), _) => (false, f.describe()),
     };
-    SiteResult { domain: domain.to_string(), ok, ms, detail }
+    SiteResult {
+        domain: domain.to_string(),
+        ok,
+        ms,
+        detail,
+    }
 }
 
 pub struct Pause {
@@ -129,7 +143,13 @@ pub struct Pause {
     pub resume: Option<ConfigEntry>,
 }
 
-pub fn spawn_check(domains: Vec<String>, workers: usize, timeout: u64, pause: Option<Pause>, ctx: egui::Context) -> Handle {
+pub fn spawn_check(
+    domains: Vec<String>,
+    workers: usize,
+    timeout: u64,
+    pause: Option<Pause>,
+    ctx: egui::Context,
+) -> Handle {
     let (tx, rx): (Sender<Event>, Receiver<Event>) = std::sync::mpsc::channel();
     let cancel = Arc::new(AtomicBool::new(false));
     let flag = cancel.clone();
@@ -141,7 +161,11 @@ pub fn spawn_check(domains: Vec<String>, workers: usize, timeout: u64, pause: Op
             let _ = tx.send(Event::Result(check(d, timeout)));
             ctx.request_repaint();
         });
-        if let Some(Pause { data, resume: Some(cfg) }) = &pause {
+        if let Some(Pause {
+            data,
+            resume: Some(cfg),
+        }) = &pause
+        {
             let _ = zapret::start_config(data, cfg);
         }
         let _ = tx.send(Event::Done);
@@ -156,8 +180,13 @@ mod tests {
 
     #[test]
     fn parse_domains() {
-        let got = parse_input("https://YouTube.com/watch?v=1, discord.com\n*.example.org:8443 foo  localhost user@mail.ru");
-        assert_eq!(got, ["youtube.com", "discord.com", "example.org", "mail.ru"]);
+        let got = parse_input(
+            "https://YouTube.com/watch?v=1, discord.com\n*.example.org:8443 foo  localhost user@mail.ru",
+        );
+        assert_eq!(
+            got,
+            ["youtube.com", "discord.com", "example.org", "mail.ru"]
+        );
         let r = check("example.com", 5);
         println!("{} {} {}ms {}", r.domain, r.ok, r.ms, r.detail);
     }

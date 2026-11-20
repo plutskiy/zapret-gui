@@ -17,7 +17,14 @@ fn quic_reasm_cancel(io: &mut dyn Io, ct: &mut Option<&mut Ctrack>, dp_any: bool
     dp_any
 }
 
-fn udp_orig_send(verdict: u8, tx: &mut Tx, dp: &Profile, ct: Option<&Ctrack>, pkt: &mut Pkt, force: bool) -> bool {
+fn udp_orig_send(
+    verdict: u8,
+    tx: &mut Tx,
+    dp: &Profile,
+    ct: Option<&Ctrack>,
+    pkt: &mut Pkt,
+    force: bool,
+) -> bool {
     if dp.dup_repeats == 0 && !force {
         return false;
     }
@@ -28,7 +35,11 @@ fn udp_orig_send(verdict: u8, tx: &mut Tx, dp: &Profile, ct: Option<&Ctrack>, pk
             Some(c) if c.dup_autottl != 0 => c.dup_autottl,
             _ => {
                 if pkt.v6 {
-                    if dp.dup_ttl6 != 0 { dp.dup_ttl6 } else { ttl_orig }
+                    if dp.dup_ttl6 != 0 {
+                        dp.dup_ttl6
+                    } else {
+                        ttl_orig
+                    }
                 } else if dp.dup_ttl != 0 {
                     dp.dup_ttl
                 } else {
@@ -41,7 +52,17 @@ fn udp_orig_send(verdict: u8, tx: &mut Tx, dp: &Profile, ct: Option<&Ctrack>, pk
             let Some(mut seg) = prepare_udp_segment(
                 &pkt.src(),
                 &pkt.dst(),
-                &UdpBuild { df: pkt.df(), ttl: ttl_fake, tos: pkt.tos(), ip_id, flow: pkt.flow(), fooling: dp.dup_fooling_mode, padding: None, padlen: 0, data: pkt.payload() },
+                &UdpBuild {
+                    df: pkt.df(),
+                    ttl: ttl_fake,
+                    tos: pkt.tos(),
+                    ip_id,
+                    flow: pkt.flow(),
+                    fooling: dp.dup_fooling_mode,
+                    padding: None,
+                    padlen: 0,
+                    data: pkt.payload(),
+                },
                 MAX_PKT,
             ) else {
                 return false;
@@ -80,7 +101,17 @@ fn udp_orig_send(verdict: u8, tx: &mut Tx, dp: &Profile, ct: Option<&Ctrack>, pk
 
 impl Engine {
     #[allow(clippy::too_many_arguments)]
-    pub fn udp_play(&mut self, io: &mut dyn Io, replay: bool, reasm_offset: usize, fwmark: u32, ifin: Iface, ifout: Iface, pkt: &mut Pkt, ct_replay: Option<&mut Ctrack>) -> u8 {
+    pub fn udp_play(
+        &mut self,
+        io: &mut dyn Io,
+        replay: bool,
+        reasm_offset: usize,
+        fwmark: u32,
+        ifin: Iface,
+        ifout: Iface,
+        pkt: &mut Pkt,
+        ct_replay: Option<&mut Ctrack>,
+    ) -> u8 {
         let params = self.params.clone();
         let mut owned: Option<Ctrack> = None;
         let mut key = None;
@@ -98,9 +129,26 @@ impl Engine {
         let mut b_fake = false;
         let mut dp_sel: Option<usize> = None;
         let desync_fwmark = fwmark | params.desync_fwmark;
-        let mut tx = Tx { io, dst: pkt.dst(), fwmark: desync_fwmark, ifout };
+        let mut tx = Tx {
+            io,
+            dst: pkt.dst(),
+            fwmark: desync_fwmark,
+            ifout,
+        };
 
-        let next = self.udp_core(&params, &mut tx, replay, reverse, reasm_offset, ifin, pkt, &mut ct, &mut verdict, &mut b_fake, &mut dp_sel);
+        let next = self.udp_core(
+            &params,
+            &mut tx,
+            replay,
+            reverse,
+            reasm_offset,
+            ifin,
+            pkt,
+            &mut ct,
+            &mut verdict,
+            &mut b_fake,
+            &mut dp_sel,
+        );
         let v = match next {
             Next::Done(v) => v,
             _ => {
@@ -108,7 +156,14 @@ impl Engine {
                 if verdict & VERDICT_MASK == VERDICT_DROP {
                     ct_new_postnat_fix(ct_nr, pkt)
                 } else if let Some(di) = dp_sel {
-                    if udp_orig_send(verdict, &mut tx, &params.profiles[di], ct.as_deref(), pkt, b_fake) {
+                    if udp_orig_send(
+                        verdict,
+                        &mut tx,
+                        &params.profiles[di],
+                        ct.as_deref(),
+                        pkt,
+                        b_fake,
+                    ) {
                         ct_new_postnat_fix(ct_nr, pkt)
                     } else {
                         verdict
@@ -145,10 +200,18 @@ impl Engine {
 
         let mut dp_idx: Option<usize>;
         if replay {
-            let Some(c) = ct.as_deref_mut() else { return Next::Done(VERDICT_PASS) };
+            let Some(c) = ct.as_deref_mut() else {
+                return Next::Done(VERDICT_PASS);
+            };
             dp_idx = c.dp;
             if dp_idx.is_none() && !c.dp_search_complete {
-                let m = self.dp_find(false, &dst, c.hostname.as_deref(), c.hostname_is_ip, c.l7proto);
+                let m = self.dp_find(
+                    false,
+                    &dst,
+                    c.hostname.as_deref(),
+                    c.hostname_is_ip,
+                    c.l7proto,
+                );
                 c.dp = m.dp;
                 c.dp_search_complete = true;
                 dp_idx = m.dp;
@@ -179,7 +242,9 @@ impl Engine {
                 }
                 dp_idx = m.dp;
             }
-            let Some(di) = dp_idx else { return Next::Done(VERDICT_PASS) };
+            let Some(di) = dp_idx else {
+                return Next::Done(VERDICT_PASS);
+            };
             *dp_sel = Some(di);
             let dp = &params.profiles[di];
             if let Some(c) = ct.as_deref_mut() {
@@ -264,7 +329,8 @@ impl Engine {
                 if let Some((defrag, full)) = quic_defrag_crypto(&cl, UDP_MAX_REASM) {
                     if full {
                         let hello = is_quic_crypto_hello(&defrag);
-                        let req_full = hello.is_some_and(|(o, l)| is_tls_handshake_full(&defrag[o..o + l]));
+                        let req_full =
+                            hello.is_some_and(|(o, l)| is_tls_handshake_full(&defrag[o..o + l]));
                         if let Some(c) = ct.as_deref_mut() {
                             if !replay {
                                 if hello.is_some() && !req_full && c.reasm_orig.is_empty() {
@@ -273,7 +339,14 @@ impl Engine {
                                 }
                                 if !c.reasm_orig.is_empty() {
                                     verdict_csum_fix(*verdict, pkt);
-                                    c.delayed.push(Delayed { dst, fwmark: tx.fwmark, ifin, ifout: tx.ifout, packet: pkt.buf.clone(), len_payload: payload.len() });
+                                    c.delayed.push(Delayed {
+                                        dst,
+                                        fwmark: tx.fwmark,
+                                        ifin,
+                                        ifout: tx.ifout,
+                                        packet: pkt.buf.clone(),
+                                        len_payload: payload.len(),
+                                    });
                                     if req_full {
                                         let q = std::mem::take(&mut c.delayed);
                                         self.replay_queue(tx.io, q, c);
@@ -285,7 +358,10 @@ impl Engine {
                             }
                         }
                         if let Some((o, l)) = hello {
-                            host = tls_hello_extract_host_from_handshake(&defrag[o..o + l], TLS_PARTIALS_ENABLE);
+                            host = tls_hello_extract_host_from_handshake(
+                                &defrag[o..o + l],
+                                TLS_PARTIALS_ENABLE,
+                            );
                             have_host = host.is_some();
                             if !have_host && dp.desync_skip_nosni {
                                 reasm_orig_cancel(tx.io, ct.as_deref_mut());
@@ -301,7 +377,14 @@ impl Engine {
                                 c.reasm_orig.feed(0, &cl);
                             }
                             verdict_csum_fix(*verdict, pkt);
-                            c.delayed.push(Delayed { dst, fwmark: tx.fwmark, ifin, ifout: tx.ifout, packet: pkt.buf.clone(), len_payload: payload.len() });
+                            c.delayed.push(Delayed {
+                                dst,
+                                fwmark: tx.fwmark,
+                                ifin,
+                                ifout: tx.ifout,
+                                packet: pkt.buf.clone(),
+                                len_payload: payload.len(),
+                            });
                             return Next::Done(ct_new_postnat_fix(Some(&*c), pkt));
                         }
                     } else if !quic_reasm_cancel(tx.io, ct, any) {
@@ -413,10 +496,19 @@ impl Engine {
         }
         let _ = dp_idx;
 
-        let lists_empty = self.lists.hostlists_empty(&dp.hl_include) && self.lists.hostlists_empty(&dp.hl_exclude);
+        let lists_empty = self.lists.hostlists_empty(&dp.hl_include)
+            && self.lists.hostlists_empty(&dp.hl_exclude);
         if have_host && !lists_empty {
             if !check_done {
-                check_result = self.lists.host_check(&dp.hl_include, &dp.hl_exclude, host.as_deref().unwrap_or(""), host_is_ip).0;
+                check_result = self
+                    .lists
+                    .host_check(
+                        &dp.hl_include,
+                        &dp.hl_exclude,
+                        host.as_deref().unwrap_or(""),
+                        host_is_ip,
+                    )
+                    .0;
             }
             if !check_result {
                 return Next::SendOrig;
@@ -437,7 +529,11 @@ impl Engine {
             Some(c) if c.desync_autottl != 0 => c.desync_autottl,
             _ => {
                 if pkt.v6 {
-                    if dp.desync_ttl6 != 0 { dp.desync_ttl6 } else { ttl_orig }
+                    if dp.desync_ttl6 != 0 {
+                        dp.desync_ttl6
+                    } else {
+                        ttl_orig
+                    }
                 } else if dp.desync_ttl != 0 {
                     dp.desync_ttl
                 } else {
@@ -455,7 +551,17 @@ impl Engine {
                         let Some(s) = prepare_udp_segment(
                             &src,
                             &dst,
-                            &UdpBuild { df, ttl: ttl_fake, tos: pkt.tos(), ip_id, flow: pkt.flow(), fooling: dp.desync_fooling_mode, padding: None, padlen: 0, data },
+                            &UdpBuild {
+                                df,
+                                ttl: ttl_fake,
+                                tos: pkt.tos(),
+                                ip_id,
+                                flow: pkt.flow(),
+                                fooling: dp.desync_fooling_mode,
+                                padding: None,
+                                padlen: 0,
+                                data,
+                            },
                             MAX_PKT,
                         ) else {
                             return Next::SendOrig;
@@ -471,13 +577,27 @@ impl Engine {
             _ => {}
         }
 
-        let mode = if dp.desync_mode2 == Mode::None { dp.desync_mode } else { dp.desync_mode2 };
+        let mode = if dp.desync_mode2 == Mode::None {
+            dp.desync_mode
+        } else {
+            dp.desync_mode2
+        };
         match mode {
             Mode::Udplen => {
                 let Some(s) = prepare_udp_segment(
                     &src,
                     &dst,
-                    &UdpBuild { df, ttl: ttl_orig, tos: pkt.tos(), ip_id, flow: pkt.flow(), fooling: 0, padding: Some(&dp.udplen_pattern), padlen: dp.udplen_increment, data: &payload },
+                    &UdpBuild {
+                        df,
+                        ttl: ttl_orig,
+                        tos: pkt.tos(),
+                        ip_id,
+                        flow: pkt.flow(),
+                        fooling: 0,
+                        padding: Some(&dp.udplen_pattern),
+                        padlen: dp.udplen_increment,
+                        data: &payload,
+                    },
                     MAX_PKT,
                 ) else {
                     return Next::SendOrig;
@@ -494,7 +614,17 @@ impl Engine {
                     let Some(s) = prepare_udp_segment(
                         &src,
                         &dst,
-                        &UdpBuild { df, ttl: ttl_orig, tos: pkt.tos(), ip_id, flow: pkt.flow(), fooling: 0, padding: None, padlen: 0, data: &p2 },
+                        &UdpBuild {
+                            df,
+                            ttl: ttl_orig,
+                            tos: pkt.tos(),
+                            ip_id,
+                            flow: pkt.flow(),
+                            fooling: 0,
+                            padding: None,
+                            padlen: 0,
+                            data: &p2,
+                        },
                         MAX_PKT,
                     ) else {
                         return Next::SendOrig;

@@ -8,7 +8,10 @@ pub const TABLE: &str = "zapret_gui";
 const PACKET_LIMIT: u32 = 12;
 
 pub fn engine_args() -> Vec<String> {
-    vec![format!("--qnum={QNUM}"), format!("--dpi-desync-fwmark={FWMARK}")]
+    vec![
+        format!("--qnum={QNUM}"),
+        format!("--dpi-desync-fwmark={FWMARK}"),
+    ]
 }
 
 fn clean_ports(list: &str) -> Vec<String> {
@@ -23,7 +26,11 @@ fn clean_ports(list: &str) -> Vec<String> {
 }
 
 pub fn ruleset(tcp: &str, udp: &str, packet_limit: bool) -> String {
-    let limit = if packet_limit { format!("ct original packets 1-{PACKET_LIMIT} ") } else { String::new() };
+    let limit = if packet_limit {
+        format!("ct original packets 1-{PACKET_LIMIT} ")
+    } else {
+        String::new()
+    };
     let mut rules = String::new();
     for (proto, ports) in [("tcp", clean_ports(tcp)), ("udp", clean_ports(udp))] {
         if !ports.is_empty() {
@@ -42,26 +49,46 @@ pub fn ruleset(tcp: &str, udp: &str, packet_limit: bool) -> String {
 mod imp {
     use std::io::Write;
     use std::process::Stdio;
+    use std::sync::Mutex;
 
     use super::*;
     use crate::sys;
 
-    fn write_proc(path: &str, value: &str) -> bool {
+    const TIMESTAMPS: &str = "/proc/sys/net/ipv4/tcp_timestamps";
+    const ACCT: &str = "/proc/sys/net/netfilter/nf_conntrack_acct";
+
+    static SAVED: Mutex<Vec<(&'static str, String)>> = Mutex::new(Vec::new());
+
+    fn write_proc(path: &'static str, value: &str) -> bool {
+        if let Ok(old) = std::fs::read_to_string(path) {
+            let mut saved = SAVED.lock().unwrap_or_else(|e| e.into_inner());
+            if !saved.iter().any(|(p, _)| *p == path) {
+                saved.push((path, old.trim().to_string()));
+            }
+        }
         std::fs::write(path, value).is_ok()
     }
 
     pub fn prepare() {
-        write_proc("/proc/sys/net/ipv4/tcp_timestamps", "1");
+        write_proc(TIMESTAMPS, "1");
         let _ = sys::hidden("modprobe").arg("nfnetlink_queue").output();
     }
 
+    pub fn restore_system() {
+        let saved = std::mem::take(&mut *SAVED.lock().unwrap_or_else(|e| e.into_inner()));
+        for (path, value) in saved {
+            let _ = std::fs::write(path, value);
+        }
+    }
+
     fn conntrack_accounting() -> bool {
-        const ACCT: &str = "/proc/sys/net/netfilter/nf_conntrack_acct";
         if !std::path::Path::new(ACCT).exists() {
             let _ = sys::hidden("modprobe").arg("nf_conntrack").output();
         }
         write_proc(ACCT, "1");
-        std::fs::read_to_string(ACCT).map(|s| s.trim() == "1").unwrap_or(false)
+        std::fs::read_to_string(ACCT)
+            .map(|s| s.trim() == "1")
+            .unwrap_or(false)
     }
 
     fn nft(script: &str) -> Result<(), String> {
@@ -72,12 +99,20 @@ mod imp {
             .stderr(Stdio::piped())
             .spawn()
             .map_err(|e| format!("Не удалось запустить nft (установлен nftables?): {e}"))?;
-        child.stdin.take().ok_or("нет stdin у nft")?.write_all(script.as_bytes()).map_err(|e| e.to_string())?;
+        child
+            .stdin
+            .take()
+            .ok_or("нет stdin у nft")?
+            .write_all(script.as_bytes())
+            .map_err(|e| e.to_string())?;
         let out = child.wait_with_output().map_err(|e| e.to_string())?;
         if out.status.success() {
             Ok(())
         } else {
-            Err(format!("nft: {}", String::from_utf8_lossy(&out.stderr).trim()))
+            Err(format!(
+                "nft: {}",
+                String::from_utf8_lossy(&out.stderr).trim()
+            ))
         }
     }
 
@@ -86,7 +121,9 @@ mod imp {
     }
 
     pub fn remove() {
-        let _ = nft(&format!("add table inet {TABLE}\ndelete table inet {TABLE}\n"));
+        let _ = nft(&format!(
+            "add table inet {TABLE}\ndelete table inet {TABLE}\n"
+        ));
     }
 }
 
@@ -95,12 +132,42 @@ mod imp {
     use super::*;
     use crate::sys;
 
+    use std::sync::Mutex;
+
+    static WAS_DISABLED: Mutex<bool> = Mutex::new(false);
+
+    fn netsh_global() -> String {
+        sys::hidden("netsh")
+            .args(["interface", "tcp", "show", "global"])
+            .output()
+            .map(|o| String::from_utf8_lossy(&o.stdout).to_lowercase())
+            .unwrap_or_default()
+    }
+
+    fn timestamps_disabled() -> bool {
+        let text = netsh_global();
+        text.lines()
+            .find(|l| l.contains("timestamps") || l.contains("rfc 1323"))
+            .is_some_and(|l| l.contains("disabled"))
+    }
+
     pub fn prepare() {
-        use std::sync::Once;
-        static ONCE: Once = Once::new();
-        ONCE.call_once(|| {
-            let _ = sys::hidden("netsh").args(["interface", "tcp", "set", "global", "timestamps=enabled"]).output();
-        });
+        let mut was_disabled = WAS_DISABLED.lock().unwrap_or_else(|e| e.into_inner());
+        if !*was_disabled && timestamps_disabled() {
+            *was_disabled = true;
+            let _ = sys::hidden("netsh")
+                .args(["interface", "tcp", "set", "global", "timestamps=enabled"])
+                .output();
+        }
+    }
+
+    pub fn restore_system() {
+        let mut was_disabled = WAS_DISABLED.lock().unwrap_or_else(|e| e.into_inner());
+        if std::mem::take(&mut *was_disabled) {
+            let _ = sys::hidden("netsh")
+                .args(["interface", "tcp", "set", "global", "timestamps=disabled"])
+                .output();
+        }
     }
 
     pub fn apply(_: &LaunchSpec) -> Result<(), String> {
@@ -116,6 +183,8 @@ mod imp {
 
     pub fn prepare() {}
 
+    pub fn restore_system() {}
+
     pub fn apply(_: &LaunchSpec) -> Result<(), String> {
         Ok(())
     }
@@ -123,7 +192,7 @@ mod imp {
     pub fn remove() {}
 }
 
-pub use imp::{apply, prepare, remove};
+pub use imp::{apply, prepare, remove, restore_system};
 
 #[cfg(test)]
 mod tests {
@@ -131,7 +200,11 @@ mod tests {
 
     #[test]
     fn nft_ruleset_is_well_formed() {
-        let s = ruleset("80,443,2053,8443,12,1024-65535,443", "443,19294-19344,12", true);
+        let s = ruleset(
+            "80,443,2053,8443,12,1024-65535,443",
+            "443,19294-19344,12",
+            true,
+        );
         println!("{s}");
         assert!(s.contains("tcp dport { 80, 443, 2053, 8443, 1024-65535 } ct original packets 1-12 meta mark and 0x40000000 == 0 queue num 200 bypass"));
         assert!(s.contains("udp dport { 443, 19294-19344 }"));

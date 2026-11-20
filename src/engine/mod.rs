@@ -4,6 +4,7 @@ pub mod desync;
 pub mod fakes;
 pub mod lists;
 pub mod packet;
+pub mod pool;
 pub mod proto;
 pub mod quic;
 pub mod rng;
@@ -14,10 +15,10 @@ pub mod udp;
 #[cfg(test)]
 mod tests;
 
-#[cfg(windows)]
-pub mod windows;
 #[cfg(target_os = "linux")]
 pub mod linux;
+#[cfg(windows)]
+pub mod windows;
 
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -55,7 +56,13 @@ impl Running {
         self.stop.store(true, Ordering::SeqCst);
         (self.shutdown)();
         if let Some(t) = self.thread.take() {
-            let _ = t.join();
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+            while !t.is_finished() && std::time::Instant::now() < deadline {
+                std::thread::sleep(std::time::Duration::from_millis(20));
+            }
+            if t.is_finished() {
+                let _ = t.join();
+            }
         }
     }
 }
@@ -68,7 +75,7 @@ pub struct Spec {
 }
 
 pub fn start(spec: Spec) -> Result<Running, String> {
-    *LOGGER.lock().unwrap() = spec.log.clone();
+    *LOGGER.lock().unwrap_or_else(|e| e.into_inner()) = spec.log.clone();
     DEBUG.store(spec.debug, Ordering::Relaxed);
     let params = args::parse(&spec.args)?;
     start_platform(params, &spec)
@@ -81,39 +88,59 @@ fn start_platform(params: args::Params, spec: &Spec) -> Result<Running, String> 
     let div = windows::Divert::open(&spec.bin_dir, &filter)?;
     let stop = Arc::new(AtomicBool::new(false));
     let sd = div.shutdown_handle();
-    let engine = desync::Engine::new(params);
+    let engines = build_engines(params, &spec.args)?;
     let stop2 = stop.clone();
     let thread = std::thread::Builder::new()
         .name("zapret-engine".into())
         .spawn(move || {
             let mut div = div;
-            let mut engine = engine;
-            div.run(&mut engine, &stop2);
+            if let Err(e) = div.run(engines, &stop2) {
+                crate::dlog!("engine: {e}");
+            }
         })
         .map_err(|e| e.to_string())?;
-    Ok(Running { stop, shutdown: Box::new(move || sd()), thread: Some(thread) })
+    Ok(Running {
+        stop,
+        shutdown: Box::new(move || sd()),
+        thread: Some(thread),
+    })
 }
 
 #[cfg(target_os = "linux")]
-fn start_platform(params: args::Params, _spec: &Spec) -> Result<Running, String> {
-    let q = linux::Queue::open(params.qnum, params.desync_fwmark)?;
+fn start_platform(params: args::Params, spec: &Spec) -> Result<Running, String> {
+    let shards = pool::shard_count();
+    let q = linux::Queue::open(params.qnum, params.desync_fwmark, shards)?;
     let stop = Arc::new(AtomicBool::new(false));
-    let engine = desync::Engine::new(params);
+    let engines = build_engines(params, &spec.args)?;
     let stop2 = stop.clone();
     let thread = std::thread::Builder::new()
         .name("zapret-engine".into())
         .spawn(move || {
             let mut q = q;
-            let mut engine = engine;
-            q.run(&mut engine, &stop2);
+            if let Err(e) = q.run(engines, &stop2) {
+                crate::dlog!("engine: {e}");
+            }
         })
         .map_err(|e| e.to_string())?;
-    Ok(Running { stop, shutdown: Box::new(|| {}), thread: Some(thread) })
+    Ok(Running {
+        stop,
+        shutdown: Box::new(|| {}),
+        thread: Some(thread),
+    })
 }
 
 #[cfg(not(any(windows, target_os = "linux")))]
 fn start_platform(_params: args::Params, _spec: &Spec) -> Result<Running, String> {
     Err("Перехват пакетов на этой ОС не поддерживается".into())
+}
+
+#[cfg(any(windows, target_os = "linux"))]
+fn build_engines(params: args::Params, raw_args: &[String]) -> Result<Vec<desync::Engine>, String> {
+    let mut engines = vec![desync::Engine::new(params)];
+    for _ in 1..pool::shard_count() {
+        engines.push(desync::Engine::new(args::parse(raw_args)?));
+    }
+    Ok(engines)
 }
 
 pub fn supported() -> bool {

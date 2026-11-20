@@ -1,0 +1,8 @@
+/* Celimos webfonts.
+   Display/UI: Inter Tight (tight premium grotesque)
+   Body/UI:    Inter
+   Mono:       JetBrains Mono (time codes, bitrate, technical)
+   Loaded from Google Fonts CDN. To ship fully offline, self-host these as
+   woff2 and replace the @import with local @font-face rules. */
+
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Inter+Tight:wght@500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap');

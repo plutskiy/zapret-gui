@@ -1,0 +1,62 @@
+/* ===========================================================================
+   Celimos — Typography tokens
+   Inter Tight for display & section headers; Inter for UI & body; JetBrains
+   Mono for time codes / technical metadata. Spacious, high-contrast, tight
+   tracking on big sizes.
+   =========================================================================== */
+
+:root {
+  /* --- Families --- */
+  --font-display: 'Inter Tight', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  --font-ui:      'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  --font-mono:    'JetBrains Mono', ui-monospace, 'SF Mono', Menlo, monospace;
+
+  /* --- Weights --- */
+  --weight-regular:  400;
+  --weight-medium:   500;
+  --weight-semibold: 600;
+  --weight-bold:     700;
+  --weight-display:  800;
+
+  /* --- Type scale (px) — spacious player; minimum readable 12px metadata --- */
+  --size-display:  44px;  /* hero album/artist title on a detail page */
+  --size-h1:       32px;  /* page title (Home, Library) */
+  --size-h2:       24px;  /* shelf / section header */
+  --size-h3:       19px;  /* card title, dialog heading */
+  --size-title:    16px;  /* track title, list-row primary */
+  --size-body:     14px;  /* default UI text */
+  --size-label:    13px;  /* buttons, tabs, secondary rows */
+  --size-meta:     12px;  /* timestamps, counts, captions */
+  --size-micro:    11px;  /* overline / EXPLICIT badge */
+
+  /* --- Line heights --- */
+  --leading-tight:   1.06;
+  --leading-snug:    1.2;
+  --leading-normal:  1.45;
+  --leading-relaxed: 1.6;
+
+  /* --- Letter spacing --- */
+  --tracking-display: -0.02em;
+  --tracking-tight:   -0.011em;
+  --tracking-normal:  0;
+  --tracking-wide:    0.04em;
+  --tracking-overline:0.14em;  /* uppercase shelf labels */
+
+  /* ===== Composite role tokens (font shorthand-ish helpers) ===== */
+  --text-display-font: var(--weight-display) var(--size-display)/var(--leading-tight) var(--font-display);
+  --text-h1-font:      var(--weight-bold) var(--size-h1)/var(--leading-snug) var(--font-display);
+  --text-h2-font:      var(--weight-bold) var(--size-h2)/var(--leading-snug) var(--font-display);
+  --text-h3-font:      var(--weight-semibold) var(--size-h3)/var(--leading-snug) var(--font-display);
+  --text-title-font:   var(--weight-semibold) var(--size-title)/var(--leading-snug) var(--font-ui);
+  --text-body-font:    var(--weight-regular) var(--size-body)/var(--leading-normal) var(--font-ui);
+  --text-label-font:   var(--weight-medium) var(--size-label)/var(--leading-snug) var(--font-ui);
+  --text-meta-font:    var(--weight-regular) var(--size-meta)/var(--leading-normal) var(--font-ui);
+}
+
+/* Optional utility classes — components mostly set font: var(--text-*-font) */
+.celimos-overline {
+  font: var(--weight-semibold) var(--size-micro)/1 var(--font-ui);
+  letter-spacing: var(--tracking-overline);
+  text-transform: uppercase;
+  color: var(--text-tertiary);
+}

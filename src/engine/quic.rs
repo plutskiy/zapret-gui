@@ -19,7 +19,11 @@ fn varint(d: &[u8]) -> (usize, u64) {
         0 => (1, (d[0] & 0x3F) as u64),
         1 => (2, (be16(d, 0) & 0x3FFF) as u64),
         2 => (4, (be32(d, 0) & 0x3FFF_FFFF) as u64),
-        _ => (8, u64::from_be_bytes([d[0], d[1], d[2], d[3], d[4], d[5], d[6], d[7]]) & 0x3FFF_FFFF_FFFF_FFFF),
+        _ => (
+            8,
+            u64::from_be_bytes([d[0], d[1], d[2], d[3], d[4], d[5], d[6], d[7]])
+                & 0x3FFF_FFFF_FFFF_FFFF,
+        ),
     }
 }
 
@@ -62,17 +66,44 @@ fn expand_label(secret: &[u8], label: &str, out: &mut [u8]) -> Option<()> {
     info.push(label.len() as u8);
     info.extend_from_slice(label.as_bytes());
     info.push(0);
-    Hkdf::<Sha256>::from_prk(secret).ok()?.expand(&info, out).ok()
+    Hkdf::<Sha256>::from_prk(secret)
+        .ok()?
+        .expand(&info, out)
+        .ok()
 }
 
-const SALT_DRAFT_22: [u8; 20] = [0x7f, 0xbc, 0xdb, 0x0e, 0x7c, 0x66, 0xbb, 0xe9, 0x19, 0x3a, 0x96, 0xcd, 0x21, 0x51, 0x9e, 0xbd, 0x7a, 0x02, 0x64, 0x4a];
-const SALT_DRAFT_23: [u8; 20] = [0xc3, 0xee, 0xf7, 0x12, 0xc7, 0x2e, 0xbb, 0x5a, 0x11, 0xa7, 0xd2, 0x43, 0x2b, 0xb4, 0x63, 0x65, 0xbe, 0xf9, 0xf5, 0x02];
-const SALT_DRAFT_29: [u8; 20] = [0xaf, 0xbf, 0xec, 0x28, 0x99, 0x93, 0xd2, 0x4c, 0x9e, 0x97, 0x86, 0xf1, 0x9c, 0x61, 0x11, 0xe0, 0x43, 0x90, 0xa8, 0x99];
-const SALT_V1: [u8; 20] = [0x38, 0x76, 0x2c, 0xf7, 0xf5, 0x59, 0x34, 0xb3, 0x4d, 0x17, 0x9a, 0xe6, 0xa4, 0xc8, 0x0c, 0xad, 0xcc, 0xbb, 0x7f, 0x0a];
-const SALT_Q50: [u8; 20] = [0x50, 0x45, 0x74, 0xEF, 0xD0, 0x66, 0xFE, 0x2F, 0x9D, 0x94, 0x5C, 0xFC, 0xDB, 0xD3, 0xA7, 0xF0, 0xD3, 0xB5, 0x6B, 0x45];
-const SALT_T50: [u8; 20] = [0x7f, 0xf5, 0x79, 0xe5, 0xac, 0xd0, 0x72, 0x91, 0x55, 0x80, 0x30, 0x4c, 0x43, 0xa2, 0x36, 0x7c, 0x60, 0x48, 0x83, 0x10];
-const SALT_T51: [u8; 20] = [0x7a, 0x4e, 0xde, 0xf4, 0xe7, 0xcc, 0xee, 0x5f, 0xa4, 0x50, 0x6c, 0x19, 0x12, 0x4f, 0xc8, 0xcc, 0xda, 0x6e, 0x03, 0x3d];
-const SALT_V2: [u8; 20] = [0x0d, 0xed, 0xe3, 0xde, 0xf7, 0x00, 0xa6, 0xdb, 0x81, 0x93, 0x81, 0xbe, 0x6e, 0x26, 0x9d, 0xcb, 0xf9, 0xbd, 0x2e, 0xd9];
+const SALT_DRAFT_22: [u8; 20] = [
+    0x7f, 0xbc, 0xdb, 0x0e, 0x7c, 0x66, 0xbb, 0xe9, 0x19, 0x3a, 0x96, 0xcd, 0x21, 0x51, 0x9e, 0xbd,
+    0x7a, 0x02, 0x64, 0x4a,
+];
+const SALT_DRAFT_23: [u8; 20] = [
+    0xc3, 0xee, 0xf7, 0x12, 0xc7, 0x2e, 0xbb, 0x5a, 0x11, 0xa7, 0xd2, 0x43, 0x2b, 0xb4, 0x63, 0x65,
+    0xbe, 0xf9, 0xf5, 0x02,
+];
+const SALT_DRAFT_29: [u8; 20] = [
+    0xaf, 0xbf, 0xec, 0x28, 0x99, 0x93, 0xd2, 0x4c, 0x9e, 0x97, 0x86, 0xf1, 0x9c, 0x61, 0x11, 0xe0,
+    0x43, 0x90, 0xa8, 0x99,
+];
+const SALT_V1: [u8; 20] = [
+    0x38, 0x76, 0x2c, 0xf7, 0xf5, 0x59, 0x34, 0xb3, 0x4d, 0x17, 0x9a, 0xe6, 0xa4, 0xc8, 0x0c, 0xad,
+    0xcc, 0xbb, 0x7f, 0x0a,
+];
+const SALT_Q50: [u8; 20] = [
+    0x50, 0x45, 0x74, 0xEF, 0xD0, 0x66, 0xFE, 0x2F, 0x9D, 0x94, 0x5C, 0xFC, 0xDB, 0xD3, 0xA7, 0xF0,
+    0xD3, 0xB5, 0x6B, 0x45,
+];
+const SALT_T50: [u8; 20] = [
+    0x7f, 0xf5, 0x79, 0xe5, 0xac, 0xd0, 0x72, 0x91, 0x55, 0x80, 0x30, 0x4c, 0x43, 0xa2, 0x36, 0x7c,
+    0x60, 0x48, 0x83, 0x10,
+];
+const SALT_T51: [u8; 20] = [
+    0x7a, 0x4e, 0xde, 0xf4, 0xe7, 0xcc, 0xee, 0x5f, 0xa4, 0x50, 0x6c, 0x19, 0x12, 0x4f, 0xc8, 0xcc,
+    0xda, 0x6e, 0x03, 0x3d,
+];
+const SALT_V2: [u8; 20] = [
+    0x0d, 0xed, 0xe3, 0xde, 0xf7, 0x00, 0xa6, 0xdb, 0x81, 0x93, 0x81, 0xbe, 0x6e, 0x26, 0x9d, 0xcb,
+    0xf9, 0xbd, 0x2e, 0xd9,
+];
 
 fn derive_client_initial_secret(cid: &[u8], version: u32) -> Option<[u8; 32]> {
     let draft = quic_draft_version(version);
@@ -104,11 +135,19 @@ pub fn quic_is_long_header(d: &[u8]) -> bool {
 }
 
 pub fn quic_extract_version(d: &[u8]) -> u32 {
-    if quic_is_long_header(d) { be32(d, 1) } else { 0 }
+    if quic_is_long_header(d) {
+        be32(d, 1)
+    } else {
+        0
+    }
 }
 
 pub fn quic_extract_dcid(d: &[u8]) -> Option<&[u8]> {
-    if !quic_is_long_header(d) || d[5] == 0 || d[5] as usize > QUIC_MAX_CID_LENGTH || 6 + d[5] as usize > d.len() {
+    if !quic_is_long_header(d)
+        || d[5] == 0
+        || d[5] as usize > QUIC_MAX_CID_LENGTH
+        || 6 + d[5] as usize > d.len()
+    {
         return None;
     }
     Some(&d[6..6 + d[5] as usize])
@@ -126,9 +165,33 @@ pub fn quic_decrypt_initial(data: &[u8], max_clean: usize) -> Option<Vec<u8>> {
     let mut key = [0u8; 16];
     let mut iv = [0u8; 12];
     let mut hp = [0u8; 16];
-    expand_label(&secret, if v1 { "tls13 quic key" } else { "tls13 quicv2 key" }, &mut key)?;
-    expand_label(&secret, if v1 { "tls13 quic iv" } else { "tls13 quicv2 iv" }, &mut iv)?;
-    expand_label(&secret, if v1 { "tls13 quic hp" } else { "tls13 quicv2 hp" }, &mut hp)?;
+    expand_label(
+        &secret,
+        if v1 {
+            "tls13 quic key"
+        } else {
+            "tls13 quicv2 key"
+        },
+        &mut key,
+    )?;
+    expand_label(
+        &secret,
+        if v1 {
+            "tls13 quic iv"
+        } else {
+            "tls13 quicv2 iv"
+        },
+        &mut iv,
+    )?;
+    expand_label(
+        &secret,
+        if v1 {
+            "tls13 quic hp"
+        } else {
+            "tls13 quicv2 hp"
+        },
+        &mut hp,
+    )?;
 
     let len = data.len();
     let mut pn_offset = 1 + 4 + 1 + data[5] as usize;
@@ -192,7 +255,8 @@ pub fn quic_decrypt_initial(data: &[u8], max_clean: usize) -> Option<Vec<u8>> {
     let gcm = Aes128Gcm::new(&key.into());
     let nonce = Nonce::try_from(&iv[..]).ok()?;
     let tag = Tag::try_from(tag_bytes).ok()?;
-    gcm.decrypt_inout_detached(&nonce, &header, buf.as_mut_slice().into(), &tag).ok()?;
+    gcm.decrypt_inout_detached(&nonce, &header, buf.as_mut_slice().into(), &tag)
+        .ok()?;
     Some(buf)
 }
 
@@ -248,7 +312,8 @@ pub fn quic_defrag_crypto(clean: &[u8], defrag_cap: usize) -> Option<(Vec<u8>, b
                 if offset + sz > szmax {
                     szmax = offset + sz;
                 }
-                data[offset as usize..(offset + sz) as usize].copy_from_slice(&clean[pos..pos + sz as usize]);
+                data[offset as usize..(offset + sz) as usize]
+                    .copy_from_slice(&clean[pos..pos + sz as usize]);
                 ranges.push((offset, sz));
             }
             pos += sz as usize;
@@ -350,19 +415,26 @@ mod tests {
 
     #[test]
     fn decrypt_real_initials() {
-        let bin = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("data").join("bin");
+        let bin = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("data")
+            .join("bin");
         let mut ok = 0;
         for (file, host) in [
             ("quic_initial_www_google_com.bin", "www.google.com"),
             ("quic_initial_4pda_to.bin", "4pda.to"),
             ("quic_initial_rutube_ru.bin", "rutube.ru"),
         ] {
-            let Ok(data) = std::fs::read(bin.join(file)) else { continue };
+            let Ok(data) = std::fs::read(bin.join(file)) else {
+                continue;
+            };
             assert!(is_quic_initial(&data), "{file}: not recognized as initial");
-            let clean = quic_decrypt_initial(&data, 16384).unwrap_or_else(|| panic!("{file}: decrypt failed"));
-            let (defrag, full) = quic_defrag_crypto(&clean, 16384).unwrap_or_else(|| panic!("{file}: defrag failed"));
+            let clean = quic_decrypt_initial(&data, 16384)
+                .unwrap_or_else(|| panic!("{file}: decrypt failed"));
+            let (defrag, full) = quic_defrag_crypto(&clean, 16384)
+                .unwrap_or_else(|| panic!("{file}: defrag failed"));
             assert!(full, "{file}: not full");
-            let (off, len) = is_quic_crypto_hello(&defrag).unwrap_or_else(|| panic!("{file}: no hello"));
+            let (off, len) =
+                is_quic_crypto_hello(&defrag).unwrap_or_else(|| panic!("{file}: no hello"));
             let got = tls_hello_extract_host_from_handshake(&defrag[off..off + len], true);
             assert_eq!(got.as_deref(), Some(host), "{file}");
             ok += 1;

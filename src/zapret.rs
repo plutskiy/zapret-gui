@@ -1,10 +1,10 @@
 use std::fs::{self, File};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Mutex, MutexGuard};
 use std::time::{Duration, Instant};
 
 use crate::firewall;
-
-const BAT_ENGINE: &str = "winws.exe";
 
 #[derive(Clone, PartialEq)]
 pub struct ConfigEntry {
@@ -29,7 +29,10 @@ pub fn find_data_dir(custom: &str) -> Option<PathBuf> {
     if !custom.trim().is_empty() {
         candidates.push(PathBuf::from(custom.trim()));
     }
-    if let Some(dir) = std::env::current_exe().ok().and_then(|e| e.parent().map(Path::to_path_buf)) {
+    if let Some(dir) = std::env::current_exe()
+        .ok()
+        .and_then(|e| e.parent().map(Path::to_path_buf))
+    {
         candidates.push(dir.join("data"));
         candidates.push(dir);
     }
@@ -37,6 +40,7 @@ pub fn find_data_dir(custom: &str) -> Option<PathBuf> {
         candidates.push(cwd.join("data"));
         candidates.push(cwd);
     }
+    #[cfg(debug_assertions)]
     candidates.push(Path::new(env!("CARGO_MANIFEST_DIR")).join("data"));
     candidates
         .into_iter()
@@ -65,7 +69,7 @@ fn natural_key(s: &str) -> String {
 }
 
 pub fn list_configs(data: &Path) -> Vec<ConfigEntry> {
-    let mut list: Vec<ConfigEntry> = fs::read_dir(data)
+    let mut list: Vec<ConfigEntry> = fs::read_dir(data.join("configs"))
         .into_iter()
         .flatten()
         .flatten()
@@ -73,10 +77,13 @@ pub fn list_configs(data: &Path) -> Vec<ConfigEntry> {
             let path = e.path();
             let file = path.file_name()?.to_string_lossy().to_string();
             let lower = file.to_lowercase();
-            if !lower.ends_with(".bat") || lower.starts_with("service") {
+            if !lower.ends_with(".conf") {
                 return None;
             }
-            Some(ConfigEntry { name: file[..file.len() - 4].to_string(), path })
+            Some(ConfigEntry {
+                name: file[..file.len() - 5].to_string(),
+                path,
+            })
         })
         .collect();
     list.sort_by_key(|c| natural_key(&c.name));
@@ -85,21 +92,29 @@ pub fn list_configs(data: &Path) -> Vec<ConfigEntry> {
 
 fn game_filter(data: &Path) -> (String, String) {
     let disabled = ("12".to_string(), "12".to_string());
-    let Ok(text) = fs::read_to_string(data.join("utils").join("game_filter.enabled")) else {
+    let Ok(text) = fs::read_to_string(data.join("main.conf")) else {
         return disabled;
     };
-    let valid = |s: &str| !s.is_empty() && s.chars().all(|c| c.is_ascii_digit() || c == ',' || c == '-');
-    let (mut mode, mut tcp, mut udp) = ("disabled".to_string(), "1024-65535".to_string(), "1024-65535".to_string());
-    for line in text.lines() {
-        let (key, value) = line.split_once('=').unwrap_or((line, ""));
+    let text = text.split("\n[").next().unwrap_or_default();
+    let valid = |s: &str| {
+        !s.is_empty()
+            && s.chars()
+                .all(|c| c.is_ascii_digit() || c == ',' || c == '-')
+    };
+    let (mut mode, mut tcp, mut udp) = (
+        "disabled".to_string(),
+        "1024-65535".to_string(),
+        "1024-65535".to_string(),
+    );
+    for line in text.lines().filter(|l| !l.trim_start().starts_with('#')) {
+        let Some((key, value)) = line.split_once('=') else {
+            continue;
+        };
         let (key, value) = (key.trim().to_lowercase(), value.trim());
         match key.as_str() {
-            "mode" => mode = value.to_lowercase(),
-            "all" => mode = "all".into(),
-            "tcp" if value.is_empty() => mode = "tcp".into(),
-            "udp" if value.is_empty() => mode = "udp".into(),
-            "tcp" if valid(value) => tcp = value.into(),
-            "udp" if valid(value) => udp = value.into(),
+            "game_filter" => mode = value.to_lowercase(),
+            "game_filter_tcp" if valid(value) => tcp = value.into(),
+            "game_filter_udp" if valid(value) => udp = value.into(),
             _ => {}
         }
     }
@@ -109,29 +124,6 @@ fn game_filter(data: &Path) -> (String, String) {
         "udp" => ("12".into(), udp),
         _ => disabled,
     }
-}
-
-fn logical_lines(text: &str) -> Vec<String> {
-    let mut out = Vec::new();
-    let mut cur = String::new();
-    for raw in text.lines() {
-        let line = raw.trim_end();
-        let (body, continued) = match line.strip_suffix('^') {
-            Some(b) => (b, true),
-            None => (line, false),
-        };
-        if !cur.is_empty() && !cur.ends_with(' ') {
-            cur.push(' ');
-        }
-        cur.push_str(if cur.is_empty() { body } else { body.trim_start() });
-        if !continued {
-            out.push(std::mem::take(&mut cur));
-        }
-    }
-    if !cur.is_empty() {
-        out.push(cur);
-    }
-    out
 }
 
 fn replace_ci(s: &str, from: &str, to: &str) -> String {
@@ -153,22 +145,6 @@ fn dir_with_slash(p: &Path) -> String {
         s.push(std::path::MAIN_SEPARATOR);
     }
     s
-}
-
-fn unescape_carets(s: &str) -> String {
-    let mut out = String::new();
-    let (mut in_quotes, mut chars) = (false, s.chars());
-    while let Some(c) = chars.next() {
-        match c {
-            '"' => {
-                in_quotes = !in_quotes;
-                out.push(c);
-            }
-            '^' if !in_quotes => out.extend(chars.next()),
-            _ => out.push(c),
-        }
-    }
-    out
 }
 
 pub fn tokenize(s: &str) -> Vec<String> {
@@ -198,19 +174,18 @@ pub fn tokenize(s: &str) -> Vec<String> {
     out
 }
 
-pub fn build_launch(data: &Path, bat: &Path) -> Result<LaunchSpec, String> {
-    let bytes = fs::read(bat).map_err(|e| format!("Не удалось прочитать {}: {e}", bat.display()))?;
-    let text = String::from_utf8_lossy(&bytes);
-    let line = logical_lines(&text)
-        .into_iter()
-        .find(|l| {
-            let l = l.trim_start().to_ascii_lowercase();
-            l.starts_with("start") && l.contains(BAT_ENGINE)
-        })
-        .ok_or("В bat-файле не найден запуск winws.exe")?;
-
-    let at = line.to_ascii_lowercase().find(BAT_ENGINE).unwrap() + BAT_ENGINE.len();
-    let mut args = line[at..].trim_start_matches('"').trim().to_string();
+pub fn build_launch(data: &Path, conf: &Path) -> Result<LaunchSpec, String> {
+    let bytes =
+        fs::read(conf).map_err(|e| format!("Не удалось прочитать {}: {e}", conf.display()))?;
+    let mut args = String::from_utf8_lossy(&bytes)
+        .lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty() && !l.starts_with('#'))
+        .collect::<Vec<_>>()
+        .join(" ");
+    if args.is_empty() {
+        return Err("Конфиг пуст".into());
+    }
 
     let (tcp, udp) = game_filter(data);
     for (var, value) in [
@@ -223,7 +198,7 @@ pub fn build_launch(data: &Path, bat: &Path) -> Result<LaunchSpec, String> {
     ] {
         args = replace_ci(&args, var, &value);
     }
-    let windows_args = unescape_carets(&args);
+    let windows_args = args;
 
     let (mut argv, mut wf_tcp, mut wf_udp) = (Vec::new(), String::new(), String::new());
     for token in tokenize(&windows_args) {
@@ -235,7 +210,12 @@ pub fn build_launch(data: &Path, bat: &Path) -> Result<LaunchSpec, String> {
             argv.push(token);
         }
     }
-    Ok(LaunchSpec { windows_args, argv, wf_tcp, wf_udp })
+    Ok(LaunchSpec {
+        windows_args,
+        argv,
+        wf_tcp,
+        wf_udp,
+    })
 }
 
 pub fn ensure_user_lists(data: &Path) {
@@ -243,7 +223,10 @@ pub fn ensure_user_lists(data: &Path) {
     let _ = fs::create_dir_all(&lists);
     for (file, content) in [
         ("ipset-exclude-user.txt", "203.0.113.113/32\r\n"),
-        ("list-general-user.txt", "# Never leave this file empty\r\ndomain.example.abc\r\n"),
+        (
+            "list-general-user.txt",
+            "# Never leave this file empty\r\ndomain.example.abc\r\n",
+        ),
         ("list-exclude-user.txt", "domain.example.abc\r\n"),
     ] {
         let p = lists.join(file);
@@ -255,13 +238,18 @@ pub fn ensure_user_lists(data: &Path) {
 
 pub fn engine_path(data: &Path) -> Result<PathBuf, String> {
     if !crate::engine::supported() {
-        return Err("На этой системе нет перехвата пакетов (поддерживаются Windows и Linux)".into());
+        return Err(
+            "На этой системе нет перехвата пакетов (поддерживаются Windows и Linux)".into(),
+        );
     }
     #[cfg(windows)]
     {
         let p = data.join("bin").join("WinDivert.dll");
         if !p.is_file() || !data.join("bin").join("WinDivert64.sys").is_file() {
-            return Err(format!("Не найдены WinDivert.dll / WinDivert64.sys в {}", data.join("bin").display()));
+            return Err(format!(
+                "Не найдены WinDivert.dll / WinDivert64.sys в {}",
+                data.join("bin").display()
+            ));
         }
         Ok(p)
     }
@@ -271,26 +259,47 @@ pub fn engine_path(data: &Path) -> Result<PathBuf, String> {
     }
 }
 
-static ENGINE: std::sync::Mutex<Option<crate::engine::Running>> = std::sync::Mutex::new(None);
+static ENGINE: Mutex<Option<crate::engine::Running>> = Mutex::new(None);
+static OPERATION: Mutex<()> = Mutex::new(());
+static SHUTDOWN: AtomicBool = AtomicBool::new(false);
 
-pub fn is_running() -> bool {
-    ENGINE.lock().map(|g| g.as_ref().is_some_and(|r| r.is_alive())).unwrap_or(false)
+fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
+    m.lock().unwrap_or_else(|e| e.into_inner())
 }
 
-pub fn stop() {
-    let r = ENGINE.lock().ok().and_then(|mut g| g.take());
+pub fn is_running() -> bool {
+    lock(&ENGINE).as_ref().is_some_and(|r| r.is_alive())
+}
+
+fn stop_engine() {
+    let r = lock(&ENGINE).take();
     if let Some(r) = r {
         r.stop();
     }
     firewall::remove();
 }
 
+pub fn stop() {
+    let _op = lock(&OPERATION);
+    stop_engine();
+    firewall::restore_system();
+}
+
+pub fn shutdown() {
+    SHUTDOWN.store(true, Ordering::SeqCst);
+    stop();
+}
+
 pub fn start_config(data: &Path, cfg: &ConfigEntry) -> Result<(), String> {
+    let _op = lock(&OPERATION);
+    if SHUTDOWN.load(Ordering::SeqCst) {
+        return Err("Приложение закрывается".into());
+    }
     ensure_user_lists(data);
     engine_path(data)?;
     let spec = build_launch(data, &cfg.path)?;
+    stop_engine();
     firewall::prepare();
-    stop();
 
     #[allow(unused_mut)]
     let mut args = tokenize(&spec.windows_args);
@@ -298,6 +307,7 @@ pub fn start_config(data: &Path, cfg: &ConfigEntry) -> Result<(), String> {
     {
         args.extend(firewall::engine_args());
     }
+
     firewall::apply(&spec)?;
 
     let debug = std::env::var_os("ZAPRET_GUI_DEBUG").is_some();
@@ -313,12 +323,18 @@ pub fn start_config(data: &Path, cfg: &ConfigEntry) -> Result<(), String> {
             }
         });
     }
-    let running = crate::engine::start(crate::engine::Spec { args, bin_dir: data.join("bin"), log: debug.then_some(log_tx), debug }).map_err(|e| {
+    let running = crate::engine::start(crate::engine::Spec {
+        args,
+        bin_dir: data.join("bin"),
+        log: debug.then_some(log_tx),
+        debug,
+    })
+    .map_err(|e| {
         firewall::remove();
         e
     })?;
 
-    let deadline = Instant::now() + Duration::from_millis(600);
+    let deadline = Instant::now() + Duration::from_millis(300);
     while Instant::now() < deadline {
         if !running.is_alive() {
             firewall::remove();
@@ -326,7 +342,7 @@ pub fn start_config(data: &Path, cfg: &ConfigEntry) -> Result<(), String> {
         }
         std::thread::sleep(Duration::from_millis(50));
     }
-    *ENGINE.lock().unwrap() = Some(running);
+    *lock(&ENGINE) = Some(running);
     Ok(())
 }
 
@@ -335,21 +351,42 @@ mod tests {
     use super::*;
 
     #[test]
-    fn all_bat_files_build_launch_spec() {
+    fn all_conf_files_build_launch_spec() {
         let data = find_data_dir("").expect("data dir");
         let configs = list_configs(&data);
         assert!(configs.len() >= 20, "found {}", configs.len());
         for cfg in &configs {
-            let spec = build_launch(&data, &cfg.path).unwrap_or_else(|e| panic!("{}: {e}", cfg.name));
-            assert!(!spec.windows_args.contains('%'), "{}: unresolved var", cfg.name);
+            let spec =
+                build_launch(&data, &cfg.path).unwrap_or_else(|e| panic!("{}: {e}", cfg.name));
+            assert!(
+                !spec.windows_args.contains('%'),
+                "{}: unresolved var",
+                cfg.name
+            );
             assert!(!spec.windows_args.contains('^'), "{}: caret left", cfg.name);
             assert!(spec.windows_args.starts_with("--wf-tcp="), "{}", cfg.name);
-            assert!(!spec.wf_tcp.is_empty() && !spec.wf_udp.is_empty(), "{}", cfg.name);
-            assert!(spec.argv.iter().all(|a| !a.starts_with("--wf-")), "{}", cfg.name);
+            assert!(
+                !spec.wf_tcp.is_empty() && !spec.wf_udp.is_empty(),
+                "{}",
+                cfg.name
+            );
+            assert!(
+                spec.argv.iter().all(|a| !a.starts_with("--wf-")),
+                "{}",
+                cfg.name
+            );
             assert!(spec.argv.iter().all(|a| !a.contains('"')), "{}", cfg.name);
             assert!(spec.argv.contains(&"--new".to_string()));
-            let listed: Vec<_> = spec.argv.iter().filter(|a| a.starts_with("--hostlist=")).collect();
-            assert!(listed.iter().all(|a| !a.contains(" ") || a.contains(&data.to_string_lossy().to_string())));
+            let listed: Vec<_> = spec
+                .argv
+                .iter()
+                .filter(|a| a.starts_with("--hostlist="))
+                .collect();
+            assert!(
+                listed
+                    .iter()
+                    .all(|a| !a.contains(" ") || a.contains(&data.to_string_lossy().to_string()))
+            );
         }
         let first = build_launch(&data, &configs[0].path).unwrap();
         println!("wf_tcp={} wf_udp={}", first.wf_tcp, first.wf_udp);

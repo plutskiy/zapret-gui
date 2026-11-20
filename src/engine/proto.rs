@@ -55,17 +55,28 @@ pub struct ProtoPos {
 }
 
 impl ProtoPos {
-    pub const EMPTY: ProtoPos = ProtoPos { marker: Marker::Abs, pos: 0 };
+    pub const EMPTY: ProtoPos = ProtoPos {
+        marker: Marker::Abs,
+        pos: 0,
+    };
 }
 
 fn check_pos(sz: usize, offset: i64) -> usize {
-    if offset >= 0 && (offset as usize) < sz { offset as usize } else { 0 }
+    if offset >= 0 && (offset as usize) < sz {
+        offset as usize
+    } else {
+        0
+    }
 }
 
 fn any_proto_pos(marker: Marker, pos: i16, sz: usize) -> usize {
     match marker {
         Marker::Abs => {
-            let offset = if pos < 0 { sz as i64 + pos as i64 } else { pos as i64 };
+            let offset = if pos < 0 {
+                sz as i64 + pos as i64
+            } else {
+                pos as i64
+            };
             check_pos(sz, offset)
         }
         _ => 0,
@@ -111,7 +122,11 @@ fn host_pos(marker: Marker, pos: i16, data: &[u8], offset_host: usize, len_host:
                             Marker::HostSld => base,
                             Marker::HostEndSld => base + slen,
                             _ => {
-                                if slen == 1 { base + 1 } else { base + slen / 2 }
+                                if slen == 1 {
+                                    base + 1
+                                } else {
+                                    base + slen / 2
+                                }
                             }
                         }) as i64
                             + pos as i64
@@ -136,20 +151,40 @@ pub fn resolve_pos(data: &[u8], l7: L7, sp: &ProtoPos) -> usize {
 }
 
 pub fn resolve_multi_pos(data: &[u8], l7: L7, splits: &[ProtoPos]) -> Vec<usize> {
-    let mut v: Vec<usize> = splits.iter().map(|s| resolve_pos(data, l7, s)).filter(|&p| p != 0).collect();
+    let mut v: Vec<usize> = splits
+        .iter()
+        .map(|s| resolve_pos(data, l7, s))
+        .filter(|&p| p != 0)
+        .collect();
     v.sort_unstable();
     v.dedup();
     v
 }
 
-const HTTP_METHODS: [&[u8]; 8] = [b"GET /", b"POST /", b"HEAD /", b"OPTIONS ", b"PUT /", b"DELETE /", b"CONNECT ", b"TRACE /"];
+const HTTP_METHODS: [&[u8]; 8] = [
+    b"GET /",
+    b"POST /",
+    b"HEAD /",
+    b"OPTIONS ",
+    b"PUT /",
+    b"DELETE /",
+    b"CONNECT ",
+    b"TRACE /",
+];
 
 pub fn is_http(data: &[u8]) -> bool {
-    HTTP_METHODS.iter().any(|m| data.len() >= m.len() && data.starts_with(m))
+    HTTP_METHODS
+        .iter()
+        .any(|m| data.len() >= m.len() && data.starts_with(m))
 }
 
 fn is_host_at(p: &[u8]) -> bool {
-    p[0] == b'\n' && p[1].eq_ignore_ascii_case(&b'h') && p[2].eq_ignore_ascii_case(&b'o') && p[3].eq_ignore_ascii_case(&b's') && p[4].eq_ignore_ascii_case(&b't') && p[5] == b':'
+    p[0] == b'\n'
+        && p[1].eq_ignore_ascii_case(&b'h')
+        && p[2].eq_ignore_ascii_case(&b'o')
+        && p[3].eq_ignore_ascii_case(&b's')
+        && p[4].eq_ignore_ascii_case(&b't')
+        && p[5] == b':'
 }
 
 // returns offset of "Host:" (after the leading '\n')
@@ -157,9 +192,10 @@ pub fn http_find_host(buf: &[u8]) -> Option<usize> {
     if buf.len() < 6 {
         return None;
     }
-    (0..=buf.len() - 6).find(|&p| is_host_at(&buf[p..])).map(|p| p + 1)
+    (0..=buf.len() - 6)
+        .find(|&p| is_host_at(&buf[p..]))
+        .map(|p| p + 1)
 }
-
 
 fn find_ci(hay: &[u8], needle: &[u8]) -> Option<usize> {
     if needle.is_empty() || hay.len() < needle.len() {
@@ -189,7 +225,6 @@ pub fn http_extract_host(data: &[u8]) -> Option<String> {
     http_extract_header(data, "\nHost:")
 }
 
-
 fn http_pos(marker: Marker, pos: i16, data: &[u8]) -> usize {
     let sz = data.len();
     match marker {
@@ -215,7 +250,11 @@ fn http_pos(marker: Marker, pos: i16, data: &[u8]) -> usize {
             }
             check_pos(sz, m as i64 + pos as i64)
         }
-        Marker::Host | Marker::HostEnd | Marker::HostSld | Marker::HostMidSld | Marker::HostEndSld => {
+        Marker::Host
+        | Marker::HostEnd
+        | Marker::HostSld
+        | Marker::HostMidSld
+        | Marker::HostEndSld => {
             if let Some(h) = http_find_host(data) {
                 if h + 7 < sz {
                     let mut host = h + 5;
@@ -225,7 +264,10 @@ fn http_pos(marker: Marker, pos: i16, data: &[u8]) -> usize {
                     let offset_host = host;
                     let len_host = if marker != Marker::Host {
                         let mut l = 0;
-                        while offset_host + l < sz && data[offset_host + l] != b'\r' && data[offset_host + l] != b'\n' {
+                        while offset_host + l < sz
+                            && data[offset_host + l] != b'\r'
+                            && data[offset_host + l] != b'\n'
+                        {
                             l += 1;
                         }
                         l
@@ -251,7 +293,12 @@ pub fn is_tls_record_full(d: &[u8]) -> bool {
     tls_record_len(d) <= d.len()
 }
 pub fn is_tls_client_hello(d: &[u8], partial_ok: bool) -> bool {
-    d.len() >= 6 && d[0] == 0x16 && d[1] == 0x03 && d[2] <= 0x03 && d[5] == 0x01 && (partial_ok || tls_record_len(d) <= d.len())
+    d.len() >= 6
+        && d[0] == 0x16
+        && d[1] == 0x03
+        && d[2] <= 0x03
+        && d[5] == 0x01
+        && (partial_ok || tls_record_len(d) <= d.len())
 }
 pub fn tls_handshake_len(d: &[u8]) -> usize {
     ((d[1] as usize) << 16) | ((d[2] as usize) << 8) | d[3] as usize
@@ -369,7 +416,12 @@ pub fn tls_hello_extract_host_from_handshake(d: &[u8], partial_ok: bool) -> Opti
 fn tls_pos(marker: Marker, pos: i16, data: &[u8]) -> usize {
     let sz = data.len();
     match marker {
-        Marker::Host | Marker::HostEnd | Marker::HostSld | Marker::HostMidSld | Marker::HostEndSld | Marker::SniExt => {
+        Marker::Host
+        | Marker::HostEnd
+        | Marker::HostSld
+        | Marker::HostMidSld
+        | Marker::HostEndSld
+        | Marker::SniExt => {
             if let Some((eo, el)) = tls_find_ext(data, 0, TLS_PARTIALS_ENABLE) {
                 if marker == Marker::SniExt {
                     return check_pos(sz, eo as i64 + pos as i64);
@@ -393,10 +445,19 @@ pub fn is_dht_d1(d: &[u8]) -> bool {
     d.len() >= 7 && d[0] == b'd' && d[1] == b'1' && d[d.len() - 1] == b'e'
 }
 pub fn is_discord_ip_discovery_request(d: &[u8]) -> bool {
-    d.len() == 74 && d[0] == 0 && d[1] == 1 && d[2] == 0 && d[3] == 70 && d[8..72].iter().all(|&b| b == 0)
+    d.len() == 74
+        && d[0] == 0
+        && d[1] == 1
+        && d[2] == 0
+        && d[3] == 70
+        && d[8..72].iter().all(|&b| b == 0)
 }
 pub fn is_stun_message(d: &[u8]) -> bool {
-    d.len() >= 20 && d[0] & 0xC0 == 0 && d[3] & 3 == 0 && be32(d, 4) == 0x2112A442 && be16(d, 2) as usize <= d.len() - 20
+    d.len() >= 20
+        && d[0] & 0xC0 == 0
+        && d[3] & 3 == 0
+        && be32(d, 4) == 0x2112A442
+        && be16(d, 2) as usize <= d.len() - 20
 }
 
 pub fn strip_host_to_ip(host: &mut String) -> bool {
@@ -423,12 +484,37 @@ mod tests {
         let req = b"GET / HTTP/1.1\r\nHost: www.example.com\r\nUser-Agent: x\r\n\r\n";
         assert!(is_http(req));
         assert_eq!(http_extract_host(req).as_deref(), Some("www.example.com"));
-        let p = resolve_pos(req, L7::Http, &ProtoPos { marker: Marker::Host, pos: 0 });
+        let p = resolve_pos(
+            req,
+            L7::Http,
+            &ProtoPos {
+                marker: Marker::Host,
+                pos: 0,
+            },
+        );
         assert_eq!(&req[p..p + 3], b"www");
-        let e = resolve_pos(req, L7::Http, &ProtoPos { marker: Marker::HostEnd, pos: 0 });
+        let e = resolve_pos(
+            req,
+            L7::Http,
+            &ProtoPos {
+                marker: Marker::HostEnd,
+                pos: 0,
+            },
+        );
         assert_eq!(&req[e..e + 2], b"\r\n");
-        let m = resolve_pos(req, L7::Http, &ProtoPos { marker: Marker::HostMidSld, pos: 0 });
-        assert!(req[m..].starts_with(b"mple.com") || req[m..].starts_with(b"ample.com"), "{:?}", String::from_utf8_lossy(&req[m..]));
+        let m = resolve_pos(
+            req,
+            L7::Http,
+            &ProtoPos {
+                marker: Marker::HostMidSld,
+                pos: 0,
+            },
+        );
+        assert!(
+            req[m..].starts_with(b"mple.com") || req[m..].starts_with(b"ample.com"),
+            "{:?}",
+            String::from_utf8_lossy(&req[m..])
+        );
     }
 
     #[test]

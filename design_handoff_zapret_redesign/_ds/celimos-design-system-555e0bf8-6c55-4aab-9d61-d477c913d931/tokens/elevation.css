@@ -1,0 +1,62 @@
+/* ===========================================================================
+   Celimos — Elevation, shadow, blur & motion tokens
+   On near-black, elevation reads through subtle lift-shadows + hairline
+   borders + a touch of top-edge highlight. Glass (blur) used for the custom
+   titlebar and the floating now-playing bar.
+   =========================================================================== */
+
+:root {
+  /* --- Drop shadows (cool, low-spread, never muddy) --- */
+  --shadow-none:  none;
+  --shadow-xs:    0 1px 2px rgba(0, 0, 0, 0.40);
+  --shadow-sm:    0 2px 8px rgba(0, 0, 0, 0.45);
+  --shadow-md:    0 8px 24px rgba(0, 0, 0, 0.50);
+  --shadow-lg:    0 18px 48px rgba(0, 0, 0, 0.58);
+  --shadow-xl:    0 32px 80px rgba(0, 0, 0, 0.65);
+
+  /* Cover-art lift — slightly larger, used under album tiles on hover */
+  --shadow-art:   0 16px 40px rgba(0, 0, 0, 0.55);
+
+  /* Accent glow — play FAB, focused primary action */
+  --glow-accent:  0 6px 24px var(--teal-glow);
+
+  /* Inner top-edge highlight that makes raised surfaces read on black */
+  --edge-top:     inset 0 1px 0 rgba(255, 255, 255, 0.05); /* @kind shadow */
+
+  /* --- Blur / glass --- */
+  --blur-sm:  8px;
+  --blur-md:  18px;
+  --blur-lg:  32px;
+  --glass-chrome: saturate(160%) blur(var(--blur-md));
+  --glass-fill:   rgba(14, 14, 17, 0.72);  /* titlebar / playbar tint over blur */
+
+  /* --- Motion: easing (uncategorized tokens) --- */
+  --ease-standard: cubic-bezier(0.4, 0.0, 0.2, 1);   /* @kind other */
+  --ease-out:      cubic-bezier(0.16, 1, 0.3, 1);    /* @kind other */
+  --ease-in:       cubic-bezier(0.4, 0.0, 1, 1);     /* @kind other */
+  --ease-spring:   cubic-bezier(0.34, 1.56, 0.64, 1);/* @kind other */
+
+  /* --- Motion: duration --- */
+  --dur-instant: 80ms;    /* @kind other */
+  --dur-fast:    140ms;   /* @kind other */
+  --dur-base:    220ms;   /* @kind other */
+  --dur-slow:    360ms;   /* @kind other */
+  --dur-slower:  560ms;   /* @kind other */
+
+  /* Common transition bundles */
+  --t-hover: background-color var(--dur-fast) var(--ease-standard),
+             color var(--dur-fast) var(--ease-standard),
+             border-color var(--dur-fast) var(--ease-standard),
+             transform var(--dur-fast) var(--ease-standard),
+             opacity var(--dur-fast) var(--ease-standard);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --dur-instant: 0ms; /* @kind other */
+    --dur-fast: 0ms;    /* @kind other */
+    --dur-base: 0ms;    /* @kind other */
+    --dur-slow: 0ms;    /* @kind other */
+    --dur-slower: 0ms;  /* @kind other */
+  }
+}

@@ -139,18 +139,28 @@ fn skip_ipv6(data: &[u8]) -> Option<(usize, u8, usize)> {
 impl Pkt {
     pub fn dissect(buf: Vec<u8>) -> Option<Pkt> {
         let len = buf.len();
-        let (v6, l3_len, proto) = if len >= 20 && buf[0] & 0xF0 == 0x40 && len >= ((buf[0] & 0x0F) as usize) << 2 {
-            let hl = ((buf[0] & 0x0F) as usize) << 2;
-            (false, hl, buf[9])
-        } else if len >= 40 && buf[0] & 0xF0 == 0x60 && (len - 40) >= be16(&buf, 4) as usize {
-            let (off, proto, _) = skip_ipv6(&buf)?;
-            (true, off, proto)
-        } else {
-            return None;
-        };
+        let (v6, l3_len, proto) =
+            if len >= 20 && buf[0] & 0xF0 == 0x40 && len >= ((buf[0] & 0x0F) as usize) << 2 {
+                let hl = ((buf[0] & 0x0F) as usize) << 2;
+                (false, hl, buf[9])
+            } else if len >= 40 && buf[0] & 0xF0 == 0x60 && (len - 40) >= be16(&buf, 4) as usize {
+                let (off, proto, _) = skip_ipv6(&buf)?;
+                (true, off, proto)
+            } else {
+                return None;
+            };
         let rest = len - l3_len;
-        let mut p = Pkt { buf, v6, l3_len, proto, tcp: false, udp: false, payload_off: len };
-        if proto == IPPROTO_TCP && rest >= 20 && rest >= ((p.buf[l3_len + 12] & 0xF0) as usize) >> 2 {
+        let mut p = Pkt {
+            buf,
+            v6,
+            l3_len,
+            proto,
+            tcp: false,
+            udp: false,
+            payload_off: len,
+        };
+        if proto == IPPROTO_TCP && rest >= 20 && rest >= ((p.buf[l3_len + 12] & 0xF0) as usize) >> 2
+        {
             p.tcp = true;
             p.payload_off = l3_len + (((p.buf[l3_len + 12] & 0xF0) as usize) >> 2);
         } else if proto == IPPROTO_UDP && rest >= 8 && rest >= be16(&p.buf, l3_len + 4) as usize {
@@ -173,7 +183,12 @@ impl Pkt {
             o.copy_from_slice(&self.buf[8..24]);
             IpAddr::V6(Ipv6Addr::from(o))
         } else {
-            IpAddr::V4(Ipv4Addr::new(self.buf[12], self.buf[13], self.buf[14], self.buf[15]))
+            IpAddr::V4(Ipv4Addr::new(
+                self.buf[12],
+                self.buf[13],
+                self.buf[14],
+                self.buf[15],
+            ))
         }
     }
     pub fn dst_ip(&self) -> IpAddr {
@@ -182,20 +197,39 @@ impl Pkt {
             o.copy_from_slice(&self.buf[24..40]);
             IpAddr::V6(Ipv6Addr::from(o))
         } else {
-            IpAddr::V4(Ipv4Addr::new(self.buf[16], self.buf[17], self.buf[18], self.buf[19]))
+            IpAddr::V4(Ipv4Addr::new(
+                self.buf[16],
+                self.buf[17],
+                self.buf[18],
+                self.buf[19],
+            ))
         }
     }
     pub fn sport(&self) -> u16 {
-        if self.tcp || self.udp { be16(&self.buf, self.l3_len) } else { 0 }
+        if self.tcp || self.udp {
+            be16(&self.buf, self.l3_len)
+        } else {
+            0
+        }
     }
     pub fn dport(&self) -> u16 {
-        if self.tcp || self.udp { be16(&self.buf, self.l3_len + 2) } else { 0 }
+        if self.tcp || self.udp {
+            be16(&self.buf, self.l3_len + 2)
+        } else {
+            0
+        }
     }
     pub fn src(&self) -> Endpoint {
-        Endpoint { ip: self.src_ip(), port: self.sport() }
+        Endpoint {
+            ip: self.src_ip(),
+            port: self.sport(),
+        }
     }
     pub fn dst(&self) -> Endpoint {
-        Endpoint { ip: self.dst_ip(), port: self.dport() }
+        Endpoint {
+            ip: self.dst_ip(),
+            port: self.dport(),
+        }
     }
     pub fn ttl(&self) -> u8 {
         if self.v6 { self.buf[7] } else { self.buf[8] }
@@ -216,7 +250,11 @@ impl Pkt {
         if self.v6 { 0 } else { self.buf[1] }
     }
     pub fn flow(&self) -> u32 {
-        if self.v6 { be32(&self.buf, 0) & 0x0FFF_FFFF } else { 0 }
+        if self.v6 {
+            be32(&self.buf, 0) & 0x0FFF_FFFF
+        } else {
+            0
+        }
     }
     pub fn set_ttl(&mut self, ttl: u8) -> bool {
         if ttl == 0 || self.ttl() == ttl {
@@ -402,7 +440,10 @@ fn fill_tcphdr(h: &mut [u8], src_port: u16, dst_port: u16, p: &TcpBuild) {
     put16(h, 0, src_port);
     put16(h, 2, dst_port);
     let (seq, ack) = if p.fooling & FOOL_BADSEQ != 0 {
-        (p.seq.wrapping_add(p.badseq_inc), p.ack.wrapping_add(p.badseq_ack_inc))
+        (
+            p.seq.wrapping_add(p.badseq_inc),
+            p.ack.wrapping_add(p.badseq_ack_inc),
+        )
     } else {
         (p.seq, p.ack)
     };
@@ -466,7 +507,15 @@ fn ip6_ext_len(fooling: u32) -> usize {
         + 8 * usize::from(fooling & FOOL_IPFRAG1 != 0)
 }
 
-fn write_ip6_header(buf: &mut [u8], src: &Ipv6Addr, dst: &Ipv6Addr, payload_len: usize, proto: u8, ttl: u8, flow: u32) {
+fn write_ip6_header(
+    buf: &mut [u8],
+    src: &Ipv6Addr,
+    dst: &Ipv6Addr,
+    payload_len: usize,
+    proto: u8,
+    ttl: u8,
+    flow: u32,
+) {
     put32(buf, 0, (flow & 0x0FFF_FFFF) | 0x6000_0000);
     put16(buf, 4, payload_len as u16);
     buf[6] = proto;
@@ -475,7 +524,17 @@ fn write_ip6_header(buf: &mut [u8], src: &Ipv6Addr, dst: &Ipv6Addr, payload_len:
     buf[24..40].copy_from_slice(&dst.octets());
 }
 
-fn write_ip4_header(buf: &mut [u8], src: &Ipv4Addr, dst: &Ipv4Addr, pktlen: usize, proto: u8, df: bool, ttl: u8, tos: u8, id: u16) {
+fn write_ip4_header(
+    buf: &mut [u8],
+    src: &Ipv4Addr,
+    dst: &Ipv4Addr,
+    pktlen: usize,
+    proto: u8,
+    df: bool,
+    ttl: u8,
+    tos: u8,
+    id: u16,
+) {
     buf[0] = 0x45;
     buf[1] = tos;
     put16(buf, 2, pktlen as u16);
@@ -542,7 +601,12 @@ fn build_ip6_ext(buf: &mut [u8], base: usize, fooling: u32, transport_proto: u8)
     (proto, off)
 }
 
-pub fn prepare_tcp_segment(src: &Endpoint, dst: &Endpoint, p: &TcpBuild, max_len: usize) -> Option<Vec<u8>> {
+pub fn prepare_tcp_segment(
+    src: &Endpoint,
+    dst: &Endpoint,
+    p: &TcpBuild,
+    max_len: usize,
+) -> Option<Vec<u8>> {
     let optlen = tcpopt_len(p.sack, p.mss != 0, p.fooling, p.ts.is_some(), p.scale);
     let tcp_len = 20 + optlen + p.data.len();
     match (src.ip, dst.ip) {
@@ -552,7 +616,17 @@ pub fn prepare_tcp_segment(src: &Endpoint, dst: &Endpoint, p: &TcpBuild, max_len
                 return None;
             }
             let mut buf = vec![0u8; pktlen];
-            write_ip4_header(&mut buf, &s, &d, pktlen, IPPROTO_TCP, p.df, p.ttl, p.tos, p.ip_id);
+            write_ip4_header(
+                &mut buf,
+                &s,
+                &d,
+                pktlen,
+                IPPROTO_TCP,
+                p.df,
+                p.ttl,
+                p.tos,
+                p.ip_id,
+            );
             fill_tcphdr(&mut buf[20..], src.port, dst.port, p);
             buf[20 + 20 + optlen..].copy_from_slice(p.data);
             let c = l4_checksum(&src.ip, &dst.ip, IPPROTO_TCP, &buf[20..]);
@@ -617,7 +691,12 @@ pub fn fill_pattern(buf: &mut [u8], pattern: &[u8], offset: usize) {
     }
 }
 
-pub fn prepare_udp_segment(src: &Endpoint, dst: &Endpoint, p: &UdpBuild, max_len: usize) -> Option<Vec<u8>> {
+pub fn prepare_udp_segment(
+    src: &Endpoint,
+    dst: &Endpoint,
+    p: &UdpBuild,
+    max_len: usize,
+) -> Option<Vec<u8>> {
     let mut len = p.data.len() as i32;
     let mut padlen = p.padlen;
     if len + padlen <= 0 {
@@ -648,7 +727,17 @@ pub fn prepare_udp_segment(src: &Endpoint, dst: &Endpoint, p: &UdpBuild, max_len
                 return None;
             }
             let mut buf = vec![0u8; pktlen];
-            write_ip4_header(&mut buf, &s, &d, pktlen, IPPROTO_UDP, p.df, p.ttl, p.tos, p.ip_id);
+            write_ip4_header(
+                &mut buf,
+                &s,
+                &d,
+                pktlen,
+                IPPROTO_UDP,
+                p.df,
+                p.ttl,
+                p.tos,
+                p.ip_id,
+            );
             put16(&mut buf, 20, src.port);
             put16(&mut buf, 22, dst.port);
             put16(&mut buf, 24, udp_len as u16);
@@ -730,5 +819,76 @@ impl AutoTtl {
             return 0;
         }
         fake
+    }
+}
+
+fn mix(mut x: u64) -> u64 {
+    x ^= x >> 33;
+    x = x.wrapping_mul(0xff51_afd7_ed55_8ccd);
+    x ^= x >> 33;
+    x = x.wrapping_mul(0xc4ce_b9fe_1a85_ec53);
+    x ^ (x >> 33)
+}
+
+fn endpoint_hash(ip: &[u8], port: u16) -> u64 {
+    let mut h = port as u64 + 0x9e37_79b9;
+    for c in ip.chunks(8) {
+        let mut b = [0u8; 8];
+        b[..c.len()].copy_from_slice(c);
+        h = mix(h ^ u64::from_le_bytes(b));
+    }
+    h
+}
+
+/// Direction-independent hash of the connection a raw IP packet belongs to.
+pub fn flow_hash(buf: &[u8]) -> u64 {
+    let (src, dst, proto, l3) = match buf.first().map(|b| b >> 4) {
+        Some(4) if buf.len() >= 20 => {
+            let hl = ((buf[0] & 0x0F) as usize) << 2;
+            let first_frag = be16(buf, 6) & 0x1FFF == 0;
+            (
+                &buf[12..16],
+                &buf[16..20],
+                buf[9],
+                if first_frag { hl } else { usize::MAX },
+            )
+        }
+        Some(6) if buf.len() >= 40 => match skip_ipv6(buf) {
+            Some((off, proto, _)) => (&buf[8..24], &buf[24..40], proto, off),
+            None => return 0,
+        },
+        _ => return 0,
+    };
+    let (sp, dp) = if matches!(proto, 6 | 17) && l3.saturating_add(4) <= buf.len() {
+        (be16(buf, l3), be16(buf, l3 + 2))
+    } else {
+        (0, 0)
+    };
+    endpoint_hash(src, sp).wrapping_add(endpoint_hash(dst, dp))
+}
+
+#[cfg(test)]
+mod flow_tests {
+    use super::*;
+
+    fn tcp4(src: [u8; 4], dst: [u8; 4], sp: u16, dp: u16) -> Vec<u8> {
+        let mut p = vec![0u8; 40];
+        p[0] = 0x45;
+        p[9] = 6;
+        p[12..16].copy_from_slice(&src);
+        p[16..20].copy_from_slice(&dst);
+        p[20..22].copy_from_slice(&sp.to_be_bytes());
+        p[22..24].copy_from_slice(&dp.to_be_bytes());
+        p
+    }
+
+    #[test]
+    fn flow_hash_is_symmetric_and_distinguishes_flows() {
+        let a = tcp4([10, 0, 0, 1], [1, 1, 1, 1], 5000, 443);
+        let b = tcp4([1, 1, 1, 1], [10, 0, 0, 1], 443, 5000);
+        let c = tcp4([10, 0, 0, 1], [1, 1, 1, 1], 5001, 443);
+        assert_eq!(flow_hash(&a), flow_hash(&b));
+        assert_ne!(flow_hash(&a), flow_hash(&c));
+        assert_eq!(flow_hash(&[]), 0);
     }
 }

@@ -19,11 +19,33 @@ pub struct Base {
 
 impl Base {
     pub fn from_pkt(pkt: &Pkt) -> Base {
-        Base { src: pkt.src(), dst: pkt.dst(), win: pkt.win(), ack: pkt.ack(), scale: pkt.tcp_scale_factor(), ts: pkt.tcp_timestamps(), df: pkt.df(), tos: pkt.tos(), flow: pkt.flow() }
+        Base {
+            src: pkt.src(),
+            dst: pkt.dst(),
+            win: pkt.win(),
+            ack: pkt.ack(),
+            scale: pkt.tcp_scale_factor(),
+            ts: pkt.tcp_timestamps(),
+            df: pkt.df(),
+            tos: pkt.tos(),
+            flow: pkt.flow(),
+        }
     }
 
     #[allow(clippy::too_many_arguments)]
-    pub fn seg_full(&self, flags: u16, sack: bool, mss: u16, seq: u32, ack: u32, ttl: u8, ip_id: u16, fooling: u32, incs: (u32, u32, u32), data: &[u8]) -> Option<Vec<u8>> {
+    pub fn seg_full(
+        &self,
+        flags: u16,
+        sack: bool,
+        mss: u16,
+        seq: u32,
+        ack: u32,
+        ttl: u8,
+        ip_id: u16,
+        fooling: u32,
+        incs: (u32, u32, u32),
+        data: &[u8],
+    ) -> Option<Vec<u8>> {
         prepare_tcp_segment(
             &self.src,
             &self.dst,
@@ -51,8 +73,19 @@ impl Base {
         )
     }
 
-    pub fn seg(&self, flags: u16, seq: u32, ttl: u8, ip_id: u16, fooling: u32, incs: (u32, u32, u32), data: &[u8]) -> Option<Vec<u8>> {
-        self.seg_full(flags, false, 0, seq, self.ack, ttl, ip_id, fooling, incs, data)
+    pub fn seg(
+        &self,
+        flags: u16,
+        seq: u32,
+        ttl: u8,
+        ip_id: u16,
+        fooling: u32,
+        incs: (u32, u32, u32),
+        data: &[u8],
+    ) -> Option<Vec<u8>> {
+        self.seg_full(
+            flags, false, 0, seq, self.ack, ttl, ip_id, fooling, incs, data,
+        )
     }
 }
 
@@ -63,7 +96,11 @@ pub struct St {
 }
 
 pub fn desync_incs(dp: &Profile) -> (u32, u32, u32) {
-    (dp.desync_ts_increment, dp.desync_badseq_increment, dp.desync_badseq_ack_increment)
+    (
+        dp.desync_ts_increment,
+        dp.desync_badseq_increment,
+        dp.desync_badseq_ack_increment,
+    )
 }
 
 fn send_delayed(io: &mut dyn Io, ct: &mut Ctrack) {
@@ -81,7 +118,17 @@ pub fn reasm_orig_cancel(io: &mut dyn Io, ct: Option<&mut Ctrack>) {
 
 impl Engine {
     #[allow(clippy::too_many_arguments)]
-    pub fn tcp_play(&mut self, io: &mut dyn Io, replay: bool, reasm_offset: usize, fwmark: u32, ifin: Iface, ifout: Iface, pkt: &mut Pkt, ct_replay: Option<&mut Ctrack>) -> u8 {
+    pub fn tcp_play(
+        &mut self,
+        io: &mut dyn Io,
+        replay: bool,
+        reasm_offset: usize,
+        fwmark: u32,
+        ifin: Iface,
+        ifout: Iface,
+        pkt: &mut Pkt,
+        ct_replay: Option<&mut Ctrack>,
+    ) -> u8 {
         let params = self.params.clone();
         let mut owned: Option<Ctrack> = None;
         let mut key = None;
@@ -96,11 +143,30 @@ impl Engine {
         }
         let ct: Option<&mut Ctrack> = if replay { ct_replay } else { owned.as_mut() };
         let mut ct = ct;
-        let mut st = St { verdict: VERDICT_PASS, b_fake: false, dp: None };
+        let mut st = St {
+            verdict: VERDICT_PASS,
+            b_fake: false,
+            dp: None,
+        };
         let desync_fwmark = fwmark | params.desync_fwmark;
-        let mut tx = Tx { io, dst: pkt.dst(), fwmark: desync_fwmark, ifout };
+        let mut tx = Tx {
+            io,
+            dst: pkt.dst(),
+            fwmark: desync_fwmark,
+            ifout,
+        };
 
-        let next = self.tcp_core(&params, &mut tx, replay, reverse, reasm_offset, ifin, pkt, &mut ct, &mut st);
+        let next = self.tcp_core(
+            &params,
+            &mut tx,
+            replay,
+            reverse,
+            reasm_offset,
+            ifin,
+            pkt,
+            &mut ct,
+            &mut st,
+        );
         let v = match next {
             Next::Done(v) => v,
             Next::Unsplit => {
@@ -128,7 +194,15 @@ impl Engine {
         v
     }
 
-    fn tcp_send_orig(&mut self, params: &Params, tx: &mut Tx, replay: bool, pkt: &mut Pkt, ct: Option<&Ctrack>, st: &St) -> u8 {
+    fn tcp_send_orig(
+        &mut self,
+        params: &Params,
+        tx: &mut Tx,
+        replay: bool,
+        pkt: &mut Pkt,
+        ct: Option<&Ctrack>,
+        st: &St,
+    ) -> u8 {
         let ct_nr = if replay { None } else { ct };
         if st.verdict & VERDICT_MASK == VERDICT_DROP {
             return ct_new_postnat_fix(ct_nr, pkt);
@@ -142,7 +216,18 @@ impl Engine {
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn tcp_core(&mut self, params: &Params, tx: &mut Tx, replay: bool, reverse: bool, reasm_offset: usize, ifin: Iface, pkt: &mut Pkt, ct: &mut Option<&mut Ctrack>, st: &mut St) -> Next {
+    fn tcp_core(
+        &mut self,
+        params: &Params,
+        tx: &mut Tx,
+        replay: bool,
+        reverse: bool,
+        reasm_offset: usize,
+        ifin: Iface,
+        pkt: &mut Pkt,
+        ct: &mut Option<&mut Ctrack>,
+        st: &mut St,
+    ) -> Next {
         let src = pkt.src();
         let dst = pkt.dst();
         let ttl_in = pkt.ttl();
@@ -151,10 +236,18 @@ impl Engine {
         // --- profile selection
         let mut dp_idx: Option<usize>;
         if replay {
-            let Some(c) = ct.as_deref_mut() else { return Next::Done(VERDICT_PASS) };
+            let Some(c) = ct.as_deref_mut() else {
+                return Next::Done(VERDICT_PASS);
+            };
             dp_idx = c.dp;
             if dp_idx.is_none() && !c.dp_search_complete {
-                let m = self.dp_find(true, &dst, c.hostname.as_deref(), c.hostname_is_ip, c.l7proto);
+                let m = self.dp_find(
+                    true,
+                    &dst,
+                    c.hostname.as_deref(),
+                    c.hostname_is_ip,
+                    c.l7proto,
+                );
                 c.dp = m.dp;
                 c.dp_search_complete = true;
                 dp_idx = m.dp;
@@ -185,7 +278,9 @@ impl Engine {
                 }
                 dp_idx = m.dp;
             }
-            let Some(di) = dp_idx else { return Next::Done(VERDICT_PASS) };
+            let Some(di) = dp_idx else {
+                return Next::Done(VERDICT_PASS);
+            };
             st.dp = Some(di);
             let dp = &params.profiles[di];
             if let Some(c) = ct.as_deref_mut() {
@@ -235,16 +330,39 @@ impl Engine {
                 }
             }
 
-            if matches!(dp.synack_split, SynackSplit::SynAck | SynackSplit::AckSyn) && tcp_synack_segment(flags) {
+            if matches!(dp.synack_split, SynackSplit::SynAck | SynackSplit::AckSyn)
+                && tcp_synack_segment(flags)
+            {
                 let f = pkt.tcp_flags() & !TH_ACK;
                 pkt.set_tcp_flags(f);
                 pkt.fix_l4_checksum();
                 let base = Base::from_pkt(pkt);
-                let ack_seg = base.seg_full(TH_ACK, false, 0, pkt.seq(), pkt.ack(), ttl_in, ip_id_fix(pkt, dp.ip_id_mode), 0, (0, 0, 0), &[]);
-                let Some(ack_seg) = ack_seg else { return Next::SendOrig };
-                let order = if dp.synack_split == SynackSplit::SynAck { ['S', 'A'] } else { ['A', 'S'] };
+                let ack_seg = base.seg_full(
+                    TH_ACK,
+                    false,
+                    0,
+                    pkt.seq(),
+                    pkt.ack(),
+                    ttl_in,
+                    ip_id_fix(pkt, dp.ip_id_mode),
+                    0,
+                    (0, 0, 0),
+                    &[],
+                );
+                let Some(ack_seg) = ack_seg else {
+                    return Next::SendOrig;
+                };
+                let order = if dp.synack_split == SynackSplit::SynAck {
+                    ['S', 'A']
+                } else {
+                    ['A', 'S']
+                };
                 for o in order {
-                    let ok = if o == 'S' { tx.send_rep(dp.desync_repeats, &pkt.buf) } else { tx.send_rep(dp.desync_repeats, &ack_seg) };
+                    let ok = if o == 'S' {
+                        tx.send_rep(dp.desync_repeats, &pkt.buf)
+                    } else {
+                        tx.send_rep(dp.desync_repeats, &ack_seg)
+                    };
                     if !ok {
                         return Next::SendOrig;
                     }
@@ -270,7 +388,11 @@ impl Engine {
                 Some(c) if c.desync_autottl != 0 => c.desync_autottl,
                 _ => {
                     if v6 {
-                        if dp.desync_ttl6 != 0 { dp.desync_ttl6 } else { ttl_orig }
+                        if dp.desync_ttl6 != 0 {
+                            dp.desync_ttl6
+                        } else {
+                            ttl_orig
+                        }
                     } else if dp.desync_ttl != 0 {
                         dp.desync_ttl
                     } else {
@@ -298,7 +420,18 @@ impl Engine {
         if !replay && tcp_syn_segment(flags_orig) {
             match dp.desync_mode0 {
                 Mode::SynAck => {
-                    let Some(s) = base.seg_full(TH_SYN | TH_ACK, false, 0, pkt.seq(), pkt.ack(), ttl_fake, ip_id, dp.desync_fooling_mode, desync_incs(dp), &[]) else {
+                    let Some(s) = base.seg_full(
+                        TH_SYN | TH_ACK,
+                        false,
+                        0,
+                        pkt.seq(),
+                        pkt.ack(),
+                        ttl_fake,
+                        ip_id,
+                        dp.desync_fooling_mode,
+                        desync_incs(dp),
+                        &[],
+                    ) else {
                         return Next::SendOrig;
                     };
                     if !tx.send_rep(dp.desync_repeats, &s) {
@@ -309,7 +442,18 @@ impl Engine {
                     if pkt.tcp_has_fastopen() || !pkt.payload().is_empty() {
                         return Next::SendOrig;
                     }
-                    let Some(s) = base.seg_full(flags_orig, sack, mss, pkt.seq(), pkt.ack(), ttl_orig, ip_id, 0, (0, 0, 0), &dp.fake_syndata) else {
+                    let Some(s) = base.seg_full(
+                        flags_orig,
+                        sack,
+                        mss,
+                        pkt.seq(),
+                        pkt.ack(),
+                        ttl_orig,
+                        ip_id,
+                        0,
+                        (0, 0, 0),
+                        &dp.fake_syndata,
+                    ) else {
                         return Next::SendOrig;
                     };
                     if !tx.send_rep(dp.desync_repeats, &s) {
@@ -329,7 +473,10 @@ impl Engine {
         // ---------------- data segment
         let mut rdata: Vec<u8>;
         if replay {
-            rdata = ct.as_deref().map(|c| c.reasm_orig.data().to_vec()).unwrap_or_default();
+            rdata = ct
+                .as_deref()
+                .map(|c| c.reasm_orig.data().to_vec())
+                .unwrap_or_default();
         } else {
             rdata = pkt.payload().to_vec();
             if let Some(c) = ct.as_deref_mut() {
@@ -390,7 +537,8 @@ impl Engine {
                     if !req_full
                         && c.reasm_orig.is_empty()
                         && !c.req_seq_abandoned
-                        && !(c.req_seq_finalized && seq_within(c.seq_last, c.req_seq_start, c.req_seq_end))
+                        && !(c.req_seq_finalized
+                            && seq_within(c.seq_last, c.req_seq_start, c.req_seq_end))
                     {
                         let sz = tls_record_len(pkt.payload());
                         if sz <= TCP_MAX_REASM {
@@ -414,7 +562,14 @@ impl Engine {
                     }
                     if !c.reasm_orig.is_empty() {
                         verdict_csum_fix(st.verdict, pkt);
-                        c.delayed.push(Delayed { dst, fwmark: tx.fwmark, ifin, ifout: tx.ifout, packet: pkt.buf.clone(), len_payload: pkt.payload().len() });
+                        c.delayed.push(Delayed {
+                            dst,
+                            fwmark: tx.fwmark,
+                            ifin,
+                            ifout: tx.ifout,
+                            packet: pkt.buf.clone(),
+                            len_payload: pkt.payload().len(),
+                        });
                         if c.reasm_orig.is_full() {
                             let q = std::mem::take(&mut c.delayed);
                             self.replay_queue(tx.io, q, c);
@@ -523,10 +678,16 @@ impl Engine {
         }
         let _ = check_excluded;
 
-        let lists_empty = self.lists.hostlists_empty(&dp.hl_include) && self.lists.hostlists_empty(&dp.hl_exclude);
+        let lists_empty = self.lists.hostlists_empty(&dp.hl_include)
+            && self.lists.hostlists_empty(&dp.hl_exclude);
         if have_host && !lists_empty {
             if !check_done {
-                let (ok, _ex) = self.lists.host_check(&dp.hl_include, &dp.hl_exclude, host.as_deref().unwrap_or(""), host_is_ip);
+                let (ok, _ex) = self.lists.host_check(
+                    &dp.hl_include,
+                    &dp.hl_exclude,
+                    host.as_deref().unwrap_or(""),
+                    host_is_ip,
+                );
                 check_result = ok;
             }
             if !check_result {
@@ -552,7 +713,11 @@ impl Engine {
                     let pl = pkt.payload_mut();
                     let mut p = ph + 5;
                     while p < plen && pl[p] != b'\r' && pl[p] != b'\n' {
-                        pl[p] = if p & 1 != 0 { pl[p].to_ascii_lowercase() } else { pl[p].to_ascii_uppercase() };
+                        pl[p] = if p & 1 != 0 {
+                            pl[p].to_ascii_lowercase()
+                        } else {
+                            pl[p].to_ascii_uppercase()
+                        };
                         p += 1;
                     }
                     st.verdict = VERDICT_MODIFY;
@@ -588,7 +753,24 @@ impl Engine {
             return Next::SendOrig;
         }
 
-        self.tcp_desync_modes(params, tx, replay, reasm_offset, pkt, ct, st, dp, &base, &rdata, l7, ttl_orig, ttl_fake, sack, mss, ip_id)
+        self.tcp_desync_modes(
+            params,
+            tx,
+            replay,
+            reasm_offset,
+            pkt,
+            ct,
+            st,
+            dp,
+            &base,
+            &rdata,
+            l7,
+            ttl_orig,
+            ttl_fake,
+            sack,
+            mss,
+            ip_id,
+        )
     }
 }
 
@@ -600,7 +782,14 @@ pub fn find_sub(hay: &[u8], needle: &[u8], from: usize) -> Option<usize> {
 }
 
 // returns true if original was sent completely
-pub fn tcp_orig_send(verdict: u8, tx: &mut Tx, dp: &Profile, ct: Option<&Ctrack>, pkt: &mut Pkt, force: bool) -> bool {
+pub fn tcp_orig_send(
+    verdict: u8,
+    tx: &mut Tx,
+    dp: &Profile,
+    ct: Option<&Ctrack>,
+    pkt: &mut Pkt,
+    force: bool,
+) -> bool {
     if dp.dup_repeats == 0 && !force {
         return false;
     }
@@ -611,7 +800,11 @@ pub fn tcp_orig_send(verdict: u8, tx: &mut Tx, dp: &Profile, ct: Option<&Ctrack>
             Some(c) if c.dup_autottl != 0 => c.dup_autottl,
             _ => {
                 if pkt.v6 {
-                    if dp.dup_ttl6 != 0 { dp.dup_ttl6 } else { ttl_orig }
+                    if dp.dup_ttl6 != 0 {
+                        dp.dup_ttl6
+                    } else {
+                        ttl_orig
+                    }
                 } else if dp.dup_ttl != 0 {
                     dp.dup_ttl
                 } else {
@@ -633,7 +826,11 @@ pub fn tcp_orig_send(verdict: u8, tx: &mut Tx, dp: &Profile, ct: Option<&Ctrack>
                 ttl_dup,
                 ip_id,
                 dp.dup_fooling_mode,
-                (dp.dup_ts_increment, dp.dup_badseq_increment, dp.dup_badseq_ack_increment),
+                (
+                    dp.dup_ts_increment,
+                    dp.dup_badseq_increment,
+                    dp.dup_badseq_ack_increment,
+                ),
                 pkt.payload(),
             ) else {
                 return false;

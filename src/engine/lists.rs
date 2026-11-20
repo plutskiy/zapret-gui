@@ -1,9 +1,16 @@
 use std::collections::HashMap;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Instant, SystemTime};
 
 type Sig = Option<(SystemTime, u64)>;
+
+static IPSET_ALL_BYPASS: AtomicBool = AtomicBool::new(false);
+
+pub fn set_ipset_all_bypass(on: bool) {
+    IPSET_ALL_BYPASS.store(on, Ordering::SeqCst);
+}
 
 fn file_sig(p: &std::path::Path) -> Sig {
     let m = std::fs::metadata(p).ok()?;
@@ -39,7 +46,9 @@ impl HostFile {
     }
 
     fn load(&mut self) -> std::io::Result<()> {
-        let Some(path) = &self.path else { return Ok(()) };
+        let Some(path) = &self.path else {
+            return Ok(());
+        };
         let text = std::fs::read(path)?;
         let text = String::from_utf8_lossy(&text);
         self.set.clear();
@@ -111,7 +120,11 @@ impl IpsetFile {
             }
             Some((IpAddr::V6(a), len)) => {
                 let a = u128::from(a);
-                let mask = if len == 0 { 0 } else { u128::MAX << (128 - len) };
+                let mask = if len == 0 {
+                    0
+                } else {
+                    u128::MAX << (128 - len)
+                };
                 self.v6.push((a & mask, a | !mask));
             }
             None => {}
@@ -129,7 +142,9 @@ impl IpsetFile {
     }
 
     fn load(&mut self) -> std::io::Result<()> {
-        let Some(path) = self.path.clone() else { return Ok(()) };
+        let Some(path) = self.path.clone() else {
+            return Ok(());
+        };
         let text = std::fs::read(&path)?;
         let text = String::from_utf8_lossy(&text);
         self.v4.clear();
@@ -142,11 +157,23 @@ impl IpsetFile {
         Ok(())
     }
 
+    fn bypassed(&self) -> bool {
+        IPSET_ALL_BYPASS.load(Ordering::Relaxed)
+            && self
+                .path
+                .as_deref()
+                .and_then(|p| p.file_name())
+                .is_some_and(|n| n.eq_ignore_ascii_case("ipset-all.txt"))
+    }
+
     pub fn is_empty(&self) -> bool {
-        self.v4.is_empty() && self.v6.is_empty()
+        self.bypassed() || (self.v4.is_empty() && self.v6.is_empty())
     }
 
     fn contains(&self, ip: &IpAddr) -> bool {
+        if self.bypassed() {
+            return false;
+        }
         match ip {
             IpAddr::V4(a) => {
                 let a = u32::from(*a);
@@ -170,7 +197,11 @@ pub struct Lists {
 
 impl Default for Lists {
     fn default() -> Self {
-        Self { hosts: Vec::new(), ipsets: Vec::new(), last_check: Instant::now() }
+        Self {
+            hosts: Vec::new(),
+            ipsets: Vec::new(),
+            last_check: Instant::now(),
+        }
     }
 }
 
@@ -181,7 +212,10 @@ impl Lists {
             if let Some(i) = self.hosts.iter().position(|h| h.path.as_ref() == Some(&pb)) {
                 return i;
             }
-            self.hosts.push(HostFile { path: Some(pb), ..Default::default() });
+            self.hosts.push(HostFile {
+                path: Some(pb),
+                ..Default::default()
+            });
         } else {
             self.hosts.push(HostFile::default());
         }
@@ -191,10 +225,17 @@ impl Lists {
     pub fn register_ipset(&mut self, path: Option<&str>) -> usize {
         if let Some(p) = path {
             let pb = PathBuf::from(p);
-            if let Some(i) = self.ipsets.iter().position(|h| h.path.as_ref() == Some(&pb)) {
+            if let Some(i) = self
+                .ipsets
+                .iter()
+                .position(|h| h.path.as_ref() == Some(&pb))
+            {
                 return i;
             }
-            self.ipsets.push(IpsetFile { path: Some(pb), ..Default::default() });
+            self.ipsets.push(IpsetFile {
+                path: Some(pb),
+                ..Default::default()
+            });
         } else {
             self.ipsets.push(IpsetFile::default());
         }
@@ -203,10 +244,26 @@ impl Lists {
 
     pub fn load_all(&mut self) -> Result<(), String> {
         for h in &mut self.hosts {
-            h.load().map_err(|e| format!("hostlist {}: {e}", h.path.as_ref().map(|p| p.display().to_string()).unwrap_or_default()))?;
+            h.load().map_err(|e| {
+                format!(
+                    "hostlist {}: {e}",
+                    h.path
+                        .as_ref()
+                        .map(|p| p.display().to_string())
+                        .unwrap_or_default()
+                )
+            })?;
         }
         for i in &mut self.ipsets {
-            i.load().map_err(|e| format!("ipset {}: {e}", i.path.as_ref().map(|p| p.display().to_string()).unwrap_or_default()))?;
+            i.load().map_err(|e| {
+                format!(
+                    "ipset {}: {e}",
+                    i.path
+                        .as_ref()
+                        .map(|p| p.display().to_string())
+                        .unwrap_or_default()
+                )
+            })?;
         }
         Ok(())
     }
@@ -268,7 +325,13 @@ impl Lists {
     }
 
     // returns (apply, excluded)
-    pub fn host_check(&self, include: &[usize], exclude: &[usize], host: &str, no_match_subdomains: bool) -> (bool, bool) {
+    pub fn host_check(
+        &self,
+        include: &[usize],
+        exclude: &[usize],
+        host: &str,
+        no_match_subdomains: bool,
+    ) -> (bool, bool) {
         for &id in exclude {
             if self.search_host(id, host, no_match_subdomains) {
                 return (false, true);
@@ -316,12 +379,50 @@ mod tests {
         l.hosts[a].add_item("^strict.org");
         let ex = l.register_hostlist(None);
         l.hosts[ex].add_item("bad.example.com");
-        assert_eq!(l.host_check(&[a], &[ex], "www.example.com", false), (true, false));
-        assert_eq!(l.host_check(&[a], &[ex], "bad.example.com", false), (false, true));
-        assert_eq!(l.host_check(&[a], &[ex], "x.bad.example.com", false), (false, true));
-        assert_eq!(l.host_check(&[a], &[], "sub.strict.org", false), (false, false));
+        assert_eq!(
+            l.host_check(&[a], &[ex], "www.example.com", false),
+            (true, false)
+        );
+        assert_eq!(
+            l.host_check(&[a], &[ex], "bad.example.com", false),
+            (false, true)
+        );
+        assert_eq!(
+            l.host_check(&[a], &[ex], "x.bad.example.com", false),
+            (false, true)
+        );
+        assert_eq!(
+            l.host_check(&[a], &[], "sub.strict.org", false),
+            (false, false)
+        );
         assert_eq!(l.host_check(&[a], &[], "strict.org", false), (true, false));
-        assert_eq!(l.host_check(&[a], &[], "www.example.com", true), (false, false));
+        assert_eq!(
+            l.host_check(&[a], &[], "www.example.com", true),
+            (false, false)
+        );
+    }
+
+    #[test]
+    fn ipset_all_bypass_ignores_only_that_file() {
+        let dir = std::env::temp_dir().join("zapret_gui_bypass_test");
+        let _ = std::fs::create_dir_all(&dir);
+        let all = dir.join("ipset-all.txt");
+        let other = dir.join("other.txt");
+        std::fs::write(&all, "10.0.0.0/8\n").unwrap();
+        std::fs::write(&other, "10.0.0.0/8\n").unwrap();
+        let mut l = Lists::default();
+        let a = l.register_ipset(Some(all.to_str().unwrap()));
+        let b = l.register_ipset(Some(other.to_str().unwrap()));
+        l.load_all().unwrap();
+        let ip: IpAddr = "11.0.0.1".parse().unwrap();
+        assert!(!l.ipset_check(&[a], &[], &ip));
+        set_ipset_all_bypass(true);
+        let bypassed = l.ipset_check(&[a], &[], &ip);
+        let other_still_filters = !l.ipset_check(&[b], &[], &ip);
+        set_ipset_all_bypass(false);
+        assert!(bypassed);
+        assert!(other_still_filters);
+        assert!(!l.ipset_check(&[a], &[], &ip));
     }
 
     #[test]

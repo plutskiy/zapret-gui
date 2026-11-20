@@ -19,13 +19,31 @@ impl ConnKey {
         let (s, d) = (p.src_ip(), p.dst_ip());
         let (sp, dp) = (p.sport(), p.dport());
         if reverse {
-            ConnKey { src: d, dst: s, sport: dp, dport: sp, tcp: p.tcp }
+            ConnKey {
+                src: d,
+                dst: s,
+                sport: dp,
+                dport: sp,
+                tcp: p.tcp,
+            }
         } else {
-            ConnKey { src: s, dst: d, sport: sp, dport: dp, tcp: p.tcp }
+            ConnKey {
+                src: s,
+                dst: d,
+                sport: sp,
+                dport: dp,
+                tcp: p.tcp,
+            }
         }
     }
     pub fn swapped(&self) -> ConnKey {
-        ConnKey { src: self.dst, dst: self.src, sport: self.dport, dport: self.sport, tcp: self.tcp }
+        ConnKey {
+            src: self.dst,
+            dst: self.src,
+            sport: self.dport,
+            dport: self.sport,
+            tcp: self.tcp,
+        }
     }
 }
 
@@ -205,7 +223,6 @@ impl Ctrack {
         }
     }
 
-
     // non-tcp packets are passed with tcp=None but len_payload filled
     fn feed_packet(&mut self, reverse: bool, tcp: Option<&Pkt>, len_payload: usize) {
         if reverse {
@@ -285,19 +302,33 @@ pub struct Conntrack {
 
 impl Conntrack {
     pub fn new(syn: u64, est: u64, fin: u64, udp: u64) -> Self {
-        Conntrack { map: HashMap::new(), timeout_syn: syn, timeout_established: est, timeout_fin: fin, timeout_udp: udp, last_purge: Instant::now() }
+        Conntrack {
+            map: HashMap::new(),
+            timeout_syn: syn,
+            timeout_established: est,
+            timeout_fin: fin,
+            timeout_udp: udp,
+            last_purge: Instant::now(),
+        }
     }
 
     pub fn purge(&mut self) {
         if self.last_purge.elapsed() < Duration::from_secs(10) {
             return;
         }
-        let (ts, te, tf, tu) = (self.timeout_syn, self.timeout_established, self.timeout_fin, self.timeout_udp);
+        let (ts, te, tf, tu) = (
+            self.timeout_syn,
+            self.timeout_established,
+            self.timeout_fin,
+            self.timeout_udp,
+        );
         self.map.retain(|k, t| {
             let idle = t.t_last.elapsed().as_secs();
             !(t.b_cutoff
                 || (k.tcp
-                    && ((t.state == ConnState::Syn && idle >= ts) || (t.state == ConnState::Established && idle >= te) || (t.state == ConnState::Fin && idle >= tf)))
+                    && ((t.state == ConnState::Syn && idle >= ts)
+                        || (t.state == ConnState::Established && idle >= te)
+                        || (t.state == ConnState::Fin && idle >= tf)))
                 || (!k.tcp && idle >= tu))
         });
         self.last_purge = Instant::now();
@@ -326,7 +357,6 @@ impl Conntrack {
         }
         None
     }
-
 }
 
 pub fn seq_within(s: u32, s1: u32, s2: u32) -> bool {
