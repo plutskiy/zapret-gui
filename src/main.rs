@@ -12,6 +12,8 @@ mod telegram;
 mod tester;
 mod tg_ws;
 mod theme;
+#[cfg(windows)]
+mod tray;
 mod zapret;
 
 fn main() -> eframe::Result {

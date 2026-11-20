@@ -24,7 +24,9 @@ tokio-tungstenite = { version = "0.28.0", default-features = false, features = [
 webpki-roots = "1.0.12"
 
 [target."cfg(windows)".dependencies]
+image = { version = "0.25.10", default-features = false, features = ["ico", "png"] }
 libloading = "0.9.1"
+tray-icon = "0.26.1"
 windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security", "Win32_System_Threading", "Win32_UI_Shell", "Win32_UI_WindowsAndMessaging"] }
 
 [target."cfg(unix)".dependencies]

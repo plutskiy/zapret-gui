@@ -114,6 +114,10 @@ pub struct App {
     show_log: bool,
     show_details: bool,
     elevated: bool,
+    system_autostart: bool,
+    confirm_close: bool,
+    #[cfg(windows)]
+    _tray: Option<tray_icon::TrayIcon>,
     running: Arc<AtomicBool>,
     service_conflict: Arc<AtomicBool>,
     busy: bool,
@@ -181,6 +185,10 @@ impl App {
             show_log: false,
             show_details: false,
             elevated: sys::has_required_privileges(),
+            system_autostart: sys::autostart_supported() && sys::autostart_enabled(),
+            confirm_close: false,
+            #[cfg(windows)]
+            _tray: crate::tray::create(&cc.egui_ctx),
             running,
             service_conflict,
             busy: false,
@@ -228,6 +236,59 @@ impl App {
         }
     }
 
+    #[cfg(windows)]
+    fn handle_close(&mut self, ui: &Ui) {
+        let ctx = ui.ctx().clone();
+        if self._tray.is_some()
+            && !crate::tray::quitting()
+            && ctx.input(|i| i.viewport().close_requested())
+        {
+            ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
+            self.confirm_close = true;
+        }
+        if !self.confirm_close {
+            return;
+        }
+        let (mut minimize, mut quit, mut cancel) = (false, false, false);
+        let modal = egui::Modal::new(egui::Id::new("close_confirm")).show(&ctx, |ui| {
+            ui.set_width(320.0);
+            ui.spacing_mut().item_spacing.y = 12.0;
+            h_title(ui, "Закрыть приложение?");
+            ui.add(
+                egui::Label::new(rt(
+                    "Можно свернуть в трей — zapret продолжит работать в фоне.",
+                    13.0,
+                    W::Reg,
+                    TEXT2,
+                ))
+                .selectable(false),
+            );
+            ui.horizontal(|ui| {
+                if button(ui, "Свернуть в трей", Variant::Primary, None, true).clicked() {
+                    minimize = true;
+                }
+                if button(ui, "Закрыть", Variant::Secondary, None, true).clicked() {
+                    quit = true;
+                }
+                if button(ui, "Отмена", Variant::Ghost, None, true).clicked() {
+                    cancel = true;
+                }
+            });
+        });
+        if modal.should_close() {
+            cancel = true;
+        }
+        if minimize {
+            self.confirm_close = false;
+            crate::tray::hide(&ctx);
+        } else if quit {
+            crate::tray::QUITTING.store(true, Ordering::Relaxed);
+            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+        } else if cancel {
+            self.confirm_close = false;
+        }
+    }
+
     fn is_running(&self) -> bool {
         self.running.load(Ordering::Relaxed)
     }
@@ -246,6 +307,8 @@ use widgets::*;
 impl eframe::App for App {
     fn ui(&mut self, ui: &mut Ui, _frame: &mut eframe::Frame) {
         self.poll();
+        #[cfg(windows)]
+        self.handle_close(ui);
 
         let wide = ui.available_width() >= WIDE_BREAKPOINT;
         let state = self.hero_state();

@@ -128,6 +128,23 @@ impl App {
                         ch |= switch(ui, &mut self.settings.autostart_last_config, false);
                     },
                 );
+                let mut autostart_toggled = None;
+                if sys::autostart_supported() {
+                    let mut on = self.system_autostart;
+                    settings_row(
+                        ui,
+                        SettingsRow {
+                            title: "Запускать вместе с системой",
+                            desc: "При входе в Windows, с правами администратора",
+                            last: false,
+                        },
+                        |ui| {
+                            if switch(ui, &mut on, self.elevated) {
+                                autostart_toggled = Some(on);
+                            }
+                        },
+                    );
+                }
                 let elevated = self.elevated;
                 settings_row(
                     ui,
@@ -145,6 +162,16 @@ impl App {
                     },
                 );
                 self.dirty |= ch;
+                if let Some(on) = autostart_toggled {
+                    if sys::set_autostart(on) {
+                        self.system_autostart = on;
+                    } else {
+                        self.log(format!(
+                            "Ошибка: не удалось {} автозапуск",
+                            if on { "включить" } else { "отключить" }
+                        ));
+                    }
+                }
             });
         });
     }

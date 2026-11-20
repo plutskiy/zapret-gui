@@ -142,6 +142,77 @@ mod win {
         shell_execute("open", uri, "")
     }
 
+    const TASK_NAME: &str = "ZapretGUI";
+
+    pub fn autostart_supported() -> bool {
+        true
+    }
+
+    pub fn autostart_enabled() -> bool {
+        hidden("schtasks")
+            .args(["/Query", "/TN", TASK_NAME])
+            .output()
+            .map(|o| o.status.success())
+            .unwrap_or(false)
+    }
+
+    fn xml_escape(s: &str) -> String {
+        s.replace('&', "&amp;")
+            .replace('<', "&lt;")
+            .replace('>', "&gt;")
+            .replace('"', "&quot;")
+    }
+
+    // Scheduled task with highest privileges: starts elevated at logon without a UAC prompt.
+    pub fn set_autostart(enable: bool) -> bool {
+        if !enable {
+            return hidden("schtasks")
+                .args(["/Delete", "/TN", TASK_NAME, "/F"])
+                .output()
+                .map(|o| o.status.success())
+                .unwrap_or(false);
+        }
+        let Ok(exe) = std::env::current_exe() else {
+            return false;
+        };
+        let exe_str = exe.to_string_lossy();
+        let dir = exe.parent().map(|p| p.to_string_lossy().into_owned());
+        let xml = format!(
+            r#"<?xml version="1.0" encoding="UTF-16"?>
+<Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
+  <Triggers><LogonTrigger><Enabled>true</Enabled></LogonTrigger></Triggers>
+  <Principals><Principal id="Author"><LogonType>InteractiveToken</LogonType><RunLevel>HighestAvailable</RunLevel></Principal></Principals>
+  <Settings>
+    <MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>
+    <DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>
+    <StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>
+    <ExecutionTimeLimit>PT0S</ExecutionTimeLimit>
+    <Enabled>true</Enabled>
+  </Settings>
+  <Actions Context="Author"><Exec><Command>{}</Command>{}</Exec></Actions>
+</Task>"#,
+            xml_escape(&exe_str),
+            dir.map(|d| format!("<WorkingDirectory>{}</WorkingDirectory>", xml_escape(&d)))
+                .unwrap_or_default()
+        );
+        let mut bytes = vec![0xFF, 0xFE];
+        for u in xml.encode_utf16() {
+            bytes.extend_from_slice(&u.to_le_bytes());
+        }
+        let tmp = std::env::temp_dir().join("zapret_gui_task.xml");
+        if std::fs::write(&tmp, bytes).is_err() {
+            return false;
+        }
+        let ok = hidden("schtasks")
+            .args(["/Create", "/TN", TASK_NAME, "/F", "/XML"])
+            .arg(&tmp)
+            .output()
+            .map(|o| o.status.success())
+            .unwrap_or(false);
+        let _ = std::fs::remove_file(&tmp);
+        ok
+    }
+
     pub fn service_running(name: &str) -> bool {
         hidden("sc")
             .args(["query", name])
@@ -220,6 +291,18 @@ mod unix {
     }
 
     pub fn service_running(_name: &str) -> bool {
+        false
+    }
+
+    pub fn autostart_supported() -> bool {
+        false
+    }
+
+    pub fn autostart_enabled() -> bool {
+        false
+    }
+
+    pub fn set_autostart(_enable: bool) -> bool {
         false
     }
 }

@@ -16,15 +16,17 @@ Compression=lzma
 SolidCompression=yes
 PrivilegesRequired=lowest
 ArchitecturesInstallIn64BitMode=x64
-UninstallDisplayIcon={app}\{#AppExeName}
+SetupIconFile=zapret.ico
+UninstallDisplayIcon={app}\zapret.ico
 
 [Files]
+Source: "zapret.ico"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\target\release\{#AppExeName}"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\data\*"; DestDir: "{app}\data"; Flags: ignoreversion recursesubdirs createallsubdirs; Excludes: "lists\*.backup,lists\*.test-backup.txt,test results\*"
 
 [Icons]
-Name: "{autoprograms}\{#AppName}"; Filename: "{app}\{#AppExeName}"; WorkingDir: "{app}"
-Name: "{autodesktop}\{#AppName}"; Filename: "{app}\{#AppExeName}"; WorkingDir: "{app}"
+Name: "{autoprograms}\{#AppName}"; Filename: "{app}\{#AppExeName}"; WorkingDir: "{app}"; IconFilename: "{app}\zapret.ico"
+Name: "{autodesktop}\{#AppName}"; Filename: "{app}\{#AppExeName}"; WorkingDir: "{app}"; IconFilename: "{app}\zapret.ico"
 
 [Run]
 Filename: "{app}\{#AppExeName}"; Description: "Запустить {#AppName}"; Flags: postinstall nowait skipifsilent
